@@ -1,3 +1,9 @@
 [submodule "packages/boogaman"]
 	path = packages/boogaman
 	url = https://github.com/hpacheco/boogaman
+[submodule "resources/jasmin-lang"]
+	path = resources/jasmin-lang
+	url = https://github.com/jasmin-lang/jasmin
+[submodule "resources/qhasm-translator"]
+	path = resources/qhasm-translator
+	url = https://github.com/tfaoliveira/qhasm-translator
