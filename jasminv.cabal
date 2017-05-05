@@ -1,4 +1,4 @@
-Name:               Jasmin Verifier
+Name:               jasminv
 Version:            0.0.1
 Description:        Jasmin Verification Tool
 License:            GPL
@@ -11,7 +11,7 @@ Homepage:
 Category:           Compiler, Cryptography, Language
 Build-Type:         Simple
 Cabal-Version:      >=1.6
-Tested-with:        GHC==7.10.2
+Tested-with:        GHC==8
 Synopsis:           Jasmin Verifier
 
 Extra-Source-Files: README.md examples
@@ -43,7 +43,7 @@ Library
                         Utils
   Other-Modules:
                         Language.Jasmin.Parser.Lexer
-                        Paths_Jasmin
+                        Paths_jasminv
   Hs-Source-Dirs: src
   Build-Depends:     posix-escape, filepath, process, split, text, shelly, containers, cmdargs, base, mtl, transformers, safe, digits, binary, bytestring, syb, array, hashable, parsec, parsec-numbers, pretty, deepseq, deepseq-generics, linguistic-ordinals >= 0.1.0.1
   Build-Tools:      alex

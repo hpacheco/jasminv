@@ -27,7 +27,7 @@ import Language.Jasmin.IO
 import Language.Location
 import Language.Position
 import Language.Vars
-import Paths_Jasmin
+import Paths_jasminv
 import Data.Version (showVersion)
 import Data.List as List
 

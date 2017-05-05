@@ -10,7 +10,7 @@ import Data.Generics hiding (Generic)
 import GHC.Generics (Generic)
 import Data.Binary
 
-import Paths_Jasmin
+import Paths_jasminv
 import Data.Version (showVersion)
 
 -- * front-end options
