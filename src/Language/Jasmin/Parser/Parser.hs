@@ -80,8 +80,8 @@ non2expr :: Monad m => ParserT m (Pexpr Position)
 non2expr = liftM (\(Loc l x) -> Pexpr l x) (locp non2expr_r) <?> "non2expr"
 
 non2expr_r :: Monad m => ParserT m (Pexpr_r Position)
-non2expr_r = apA2 var (optionMaybe $ brackets pexpr) (\v mbi -> case mbi of { Nothing -> PEVar v; Just i -> PEGet v i })
-      <|> apA3 ident (parens_tuple pexpr) (tok SEMICOLON) (\fname args _ -> PECall fname args)
+non2expr_r = apA2 ident (parens_tuple pexpr) (\fname args -> PECall fname args)
+      <||> apA2 var (optionMaybe $ brackets pexpr) (\v mbi -> case mbi of { Nothing -> PEVar v; Just i -> PEGet v i })
       <|> toK TRUE (PEBool True)
       <|> toK FALSE (PEBool False)
       <|> tokWith getInt
@@ -171,14 +171,18 @@ pfunbody = apA5
     <?> "pfunbody"
 
 pfundef :: Monad m => ParserT m (Pfundef Position)
-pfundef = apA5
+pfundef = apA6
+    (optionMaybe pcall_conv)
     (locp $ tok FN)
     ident
     (parens_tuple (stor_type >*< optionMaybe var))
     (optionMaybe $ prefix (tok RARROW) (tuple stor_type))
     pfunbody
-    (\(Loc p _) name args rty body -> Pfundef name args rty body p)
+    (\cc (Loc p _) name args rty body -> Pfundef cc name args rty body p)
     <?> "pfundef"
+
+pcall_conv :: Monad m => ParserT m Pcall_conv
+pcall_conv = toK EXPORT CCExport <|> toK INLINE CCInline
 
 -- (* -------------------------------------------------------------------- *)
 

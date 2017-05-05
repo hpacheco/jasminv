@@ -28,3 +28,13 @@ By default, the tool will typecheck and verify an input Jasmin program:
 ```
 > jasminv examples/test.mil --verify=bothv
 ```
+
+#### Tests:
+For running tests, you can simply run:
+```
+runhaskell tests/Tests.hs
+```
+For nice test output, you can run instead:
+```
+cabal exec -- runhaskell tests/Tests.hs
+```

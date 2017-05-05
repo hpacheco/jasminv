@@ -74,7 +74,7 @@ dafnyPreludeFile = getDataFileName ("imports" </> "prelude.dfy")
 
 genDafny :: (GenVar Piden m,MonadIO m) => Options -> FilePath -> Bool -> Pprogram TyInfo -> StatusM m Doc
 genDafny opts prelude isLeak prog = do
-    e <- lift2 $ toDafny prelude isLeak (noDafnyModules opts) prog
+    e <- lift2 $ toDafny prelude isLeak prog
     case e of
         Left err -> throwError err
         Right dfy -> return dfy
@@ -82,7 +82,7 @@ genDafny opts prelude isLeak prog = do
 verifyDafny :: (GenVar Piden m,MonadIO m) => Options -> Pprogram TyInfo -> StatusM m ()
 verifyDafny opts prog = do
     let fn = dropExtension $ posFileName $ infoLoc $ pprogramLoc prog
-    when (verify opts /= NoneV) $ do
+    when (verify' opts /= NoneV) $ do
         let dfyfile = fn ++ ".dfy"
         let dfylfile = fn ++ "_leak.dfy"
         let bplfile = fn ++ ".bpl"
@@ -92,11 +92,11 @@ verifyDafny opts prog = do
         
         -- generate dafny files
         prelude <- liftIO dafnyPreludeFile
-        when (isFuncV (verify opts)) $ do
+        when (isFuncV $ verify' opts) $ do
             when (debugVerification opts) $ liftIO $ hPutStrLn stderr $ show $ text "Generating Dafny output file" <+> text (show dfyfile)
             dfy <- genDafny opts prelude False prog
             liftIO $ writeFile dfyfile (show dfy)
-        when (isLeakV (verify opts)) $ do
+        when (isLeakV $ verify' opts) $ do
             when (debugVerification opts) $ liftIO $ hPutStrLn stderr $ show $ text "Generating Dafny output leakage file" <+> text (show dfylfile)
             dfyl <- genDafny opts prelude True prog
             liftIO $ writeFile dfylfile (show dfyl)
@@ -116,10 +116,11 @@ verifyDafny opts prog = do
             shadowBoogaman (debugVerification opts) opts [] bpllfile bpllfile2
             runBoogie (verificationTimeOut opts) True (debugVerification opts) bpllfile2
 
-        case verify opts of
+        case verify' opts of
             FuncV -> func
             LeakV -> spec
             BothV -> func >> spec
+            NoneV -> return ()
 
 compileDafny :: (MonadIO m) => Bool -> Bool -> FilePath -> FilePath -> StatusM m ()
 compileDafny isLeak isDebug dfy bpl = do
@@ -175,7 +176,7 @@ verifErr isDafny res = do
         Left err -> throwError $ GenericError noloc (text "Unexpected" <+> text exec <+> text "verification error:") (Just err)
 
 dafnyVCGen :: Options -> String
-dafnyVCGen opts = if noDafnyModules opts then "dafnynomodules" else "dafnymodules"
+dafnyVCGen opts = "dafnynomodules"
 
 axiomatizeBoogaman :: (MonadIO m) => Bool -> Options -> [String] -> FilePath -> FilePath -> StatusM m ()
 axiomatizeBoogaman isDebug opts axioms bpl1 bpl2 = do

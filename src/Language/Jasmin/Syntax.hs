@@ -397,9 +397,20 @@ instance Monad m => PP m (Pfunbody info) where
             return $ PP.text "return" <+> PP.parens vs <> PP.semicolon
         return $ PP.vbraces $ PP.vcat vs $+$ PP.vcat is $+$ r
 
+data Pcall_conv = CCExport | CCInline
+    deriving (Eq,Ord,Show,Data,Typeable,Generic)
+instance Binary Pcall_conv
+instance Hashable Pcall_conv
+instance NFData Pcall_conv where
+    rnf = genericRnf
+instance Monad m => PP m Pcall_conv where
+    pp CCExport = return $ PP.text "export"
+    pp CCInline = return $ PP.text "inline"
+
 -- (* -------------------------------------------------------------------- *)
 data Pfundef info = Pfundef 
-    {  pdf_name :: Pident info
+    {  pdf_cc   :: Maybe Pcall_conv
+    ,  pdf_name :: Pident info
     ,  pdf_args :: [Parg info]
     ,  pdf_rty  :: Maybe [Pstotype info]
     ,  pdf_body :: Pfunbody info
@@ -414,12 +425,13 @@ type Parg info = (Pstotype info,Maybe (Pident info))
 type Pbodyarg info = (Pstotype info,Pident info)
 
 instance Monad m => PP m (Pfundef info) where
-    pp (Pfundef name args ty body info) = do
+    pp (Pfundef cc name args ty body info) = do
+        pcc <- PP.ppOptM cc pp
         n <- pp name
         as <- PP.parensM (PP.sepByM (mapM PP.ppSpaced3 args) (PP.text ","))
         t <- PP.ppOptM ty (\ty -> liftM (PP.text "->" <+>) (PP.sepByM (mapM PP.ppSpaced ty) (PP.text ",")))
         b <- pp body
-        return $ PP.text "fn" <+> n <+> as <+> t $+$ b
+        return $ pcc <+> PP.text "fn" <+> n <+> as <+> t $+$ b
 
 instance Location info => Located (Pfundef info) where
     type LocOf (Pfundef info) = info
@@ -473,14 +485,15 @@ instance (Vars Piden m info) => Vars Piden m (Pitem info) where
     traverseVars f (PParam x) = liftM PParam $ f x
 
 instance (Vars Piden m info) => Vars Piden m (Pfundef info) where
-    traverseVars f (Pfundef n args ret body i) = do
+    traverseVars f (Pfundef cc n args ret body i) = do
+        cc' <- f cc
         n' <- inLHS True $ f n
         ret' <- f ret
         i' <- f i
         varsBlock $ do
             args' <- mapM f args
             body' <- f body
-            return $ Pfundef n' args' ret' body' i'
+            return $ Pfundef cc' n' args' ret' body' i'
 
 instance (Vars Piden m info) => Vars Piden m (Pparam info) where
     traverseVars f (Pparam t n e) = do
@@ -630,6 +643,8 @@ instance (Vars Piden m info) => Vars Piden m (Pident info) where
     substL v = return $ Just (funit v)
     unSubstL (Pident i oldn) (Pident _ newn) = return $ Pident i newn
 
+instance GenVar Piden m => Vars Piden m Pcall_conv where
+    traverseVars f = return
 instance GenVar Piden m => Vars Piden m Fordir where
     traverseVars f = return
 instance GenVar Piden m => Vars Piden m Pstorage where

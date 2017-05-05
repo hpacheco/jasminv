@@ -14,7 +14,7 @@ Cabal-Version:      >=1.6
 Tested-with:        GHC==8
 Synopsis:           Jasmin Verifier
 
-Extra-Source-Files: README.md examples
+Extra-Source-Files: README.md examples tests
 Data-files: imports/*.dfy
 
 Executable jasminv
@@ -47,3 +47,21 @@ Library
   Hs-Source-Dirs: src
   Build-Depends:     posix-escape, filepath, process, split, text, shelly, containers, cmdargs, base, mtl, transformers, safe, digits, binary, bytestring, syb, array, hashable, parsec, parsec-numbers, pretty, deepseq, deepseq-generics, linguistic-ordinals >= 0.1.0.1
   Build-Tools:      alex
+
+test-suite tests
+  type:
+      exitcode-stdio-1.0
+  ghc-options:
+      -Wall
+  hs-source-dirs:
+      tests
+  main-is:
+      Tests.hs
+  build-depends:
+      base
+    , HUnit
+    , filemanip
+    , hspec   
+    , hspec-contrib
+    , hspec-core
+

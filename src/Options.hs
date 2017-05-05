@@ -27,9 +27,8 @@ data Options
         , debugTypechecker      :: Bool
         , debugVerification     :: Bool
         , typecheck             :: Bool
-        , verify                :: VerifyOpt
+        , verify                :: Maybe VerifyOpt
         , verificationTimeOut   :: Int
-        , noDafnyModules        :: Bool
         }
     deriving (Show, Data, Typeable,Generic)
 instance Binary Options
@@ -43,9 +42,8 @@ instance Monoid Options where
         , debugTypechecker = False
         , debugVerification = False
         , typecheck = True
-        , verify = mempty
+        , verify = Nothing
         , verificationTimeOut = 60
-        , noDafnyModules = False
         }
     mappend x y = Opts
         { inputs = inputs x ++ inputs y
@@ -54,10 +52,13 @@ instance Monoid Options where
         , debugTypechecker = debugTypechecker x || debugTypechecker y
         , debugVerification = debugVerification x || debugVerification y
         , typecheck = typecheck x && typecheck y
-        , verify = verify x `mappend` verify y
+        , verify = verify x `joinVerifyOpts` verify y
         , verificationTimeOut = max (verificationTimeOut x) (verificationTimeOut y)
-        , noDafnyModules = noDafnyModules x || noDafnyModules y
         }
+
+joinVerifyOpts Nothing y = y
+joinVerifyOpts x Nothing = x
+joinVerifyOpts (Just x) (Just y) = Just $ x `mappend` y
 
 data VerifyOpt = NoneV | FuncV | LeakV | BothV
     deriving (Data, Typeable,Generic,Eq,Show,Read)
@@ -93,9 +94,10 @@ optionsDecl  = Opts {
     , typecheck             = typecheck mempty &= help "Typecheck" &= groupname "Typechecking"
     , verify                = verify mempty &= help "Verify" &= groupname "Verification"
     , verificationTimeOut   = verificationTimeOut mempty &= help "Timeout for verification" &= groupname "Verification"
-    , noDafnyModules        = noDafnyModules mempty &= help "Do not generate Dafny modules" &= groupname "Verification"
     }
     &= help "Jasmin analyser"
+
+verify' = maybe BothV id . verify
 
 mode  :: Mode (CmdArgs Options)
 mode  = cmdArgsMode $

@@ -44,6 +44,7 @@ data Token
     | REG   
     | STACK 
     | INLINE
+    | EXPORT
     | PARAM 
     | MEM   
     | TRUE  
@@ -118,6 +119,7 @@ instance Monad m => PP m Token where
     pp REG      = return $ text "reg"
     pp STACK    = return $ text "stack"
     pp INLINE   = return $ text "inline"
+    pp EXPORT   = return $ text "export"
     pp PARAM    = return $ text "param"
     pp MEM      = return $ text "MEM"
     pp TRUE     = return $ text "true"

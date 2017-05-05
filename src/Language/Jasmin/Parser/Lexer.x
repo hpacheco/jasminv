@@ -61,6 +61,7 @@ tokens :-
 <0>                 reg         { lexerTokenInfo REG }
 <0>                 stack       { lexerTokenInfo STACK }
 <0>                 inline      { lexerTokenInfo INLINE }
+<0>                 export      { lexerTokenInfo EXPORT }
 <0>                 param       { lexerTokenInfo PARAM }
 <0>                 MEM         { lexerTokenInfo MEM }
 <0>                 true        { lexerTokenInfo TRUE }

@@ -344,12 +344,12 @@ tt_funbody (Pfunbody vars instrs ret) = tt_local $ do
     return $ Pfunbody vars' instrs' ret'
 
 tt_fundef :: TcK m => Pfundef Position -> TcM m (Pfundef TyInfo)
-tt_fundef pf@(Pfundef name args rty body l) = tt_global $ do
+tt_fundef pf@(Pfundef cc name args rty body l) = tt_global $ do
     let name' = fmap noTyInfo name
     args' <- tt_vardecls' args
     rty' <- mapM (mapM (mapSndM tt_type)) rty
     (body',cl) <- withDecClass $ tt_funbody body
-    let pf' = Pfundef name' args' rty' body' (decInfoLoc cl l)
+    let pf' = Pfundef cc name' args' rty' body' (decInfoLoc cl l)
     check_sig l (map (snd) $ Foldable.concat rty') (map (infoTy . loc) $ Foldable.concat $ pdb_ret body')
     addFun pf'
     return pf'

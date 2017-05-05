@@ -31,18 +31,14 @@ import Language.Jasmin.Error
 
 import Utils
 
-toDafny :: DafnyK m => FilePath -> Bool -> Bool -> Pprogram TyInfo -> m (Either JasminError Doc)
-toDafny prelude leakMode noDafnyModules prog = runExceptT $ flip State.evalStateT (DafnySt leakMode Nothing [] KeepF Map.empty) $ do
+toDafny :: DafnyK m => FilePath -> Bool -> Pprogram TyInfo -> m (Either JasminError Doc)
+toDafny prelude leakMode prog = runExceptT $ flip State.evalStateT (DafnySt leakMode Nothing [] KeepF Map.empty) $ do
     dfy <- liftIO $ readFile prelude
-    let pdfy = if noDafnyModules
-        then text dfy
-        else text "module" <+> text "prelude" <+> vbraces (text dfy)
+    let pdfy = text dfy
     let pname = dropExtension $ takeFileName $ posFileName $ infoLoc $ pprogramLoc prog
     pprog <- pprogramtoDafny prog
     let pimport = text "import opened prelude"
-    let pcode = if noDafnyModules
-        then pprog
-        else text "module" <+> text pname <+> vbraces (pimport $+$ pprog)
+    let pcode = pprog
     return $ pdfy $+$ pcode
 
 pprogramtoDafny :: DafnyK m => Pprogram TyInfo -> DafnyM m Doc
@@ -56,7 +52,7 @@ pitemToDafny (PFundef f) = pfundefToDafny f
 pitemToDafny (PParam p) = pparamToDafny p
 
 pfundefToDafny :: DafnyK m => Pfundef TyInfo -> DafnyM m Doc
-pfundefToDafny def@(Pfundef pn pargs pret (Pfunbody pbvars pbinstrs pbret) info) = insideDecl did $ resetAssumptions $ do
+pfundefToDafny def@(Pfundef cc pn pargs pret (Pfunbody pbvars pbinstrs pbret) info) = insideDecl did $ resetAssumptions $ do
     let p = infoLoc info
     ppn <- procidenToDafny pn
     (ppargs,parganns) <- procedureArgsToDafny IsPrivate False pargs

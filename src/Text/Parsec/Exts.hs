@@ -89,3 +89,9 @@ foldl1 f ma mb = do
     x <- ma
     ys <- many mb
     Foldable.foldlM f x ys
+
+foldl1' :: Stream s m t => (a -> b -> ParsecT s u m a) -> ParsecT s u m a -> ParsecT s u m b -> ParsecT s u m a
+foldl1' f ma mb = do
+    x <- ma
+    ys <- many' mb
+    Foldable.foldlM f x ys
