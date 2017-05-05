@@ -21,7 +21,7 @@ method addcarry8(x: bv8, y: bv8, cfi: bool) returns (cf: bool, r : bv8)
 {
    var i:int := (x as int) + (y as int) + bool_to_int(cfi);
    r:= x + y + bool_to_bv8(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -29,7 +29,7 @@ method addcarry16(x: bv16, y: bv16, cfi: bool) returns (cf: bool, r : bv16)
 {
    var i:int := (x as int) + (y as int) + bool_to_int(cfi);
    r:= x + y + bool_to_bv16(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -37,7 +37,7 @@ method addcarry32(x: bv32, y: bv32, cfi: bool) returns (cf: bool, r : bv32)
 {
    var i:int := (x as int) + (y as int) + bool_to_int(cfi);
    r:= x + y + bool_to_bv32(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -45,7 +45,7 @@ method addcarry64(x: bv64, y: bv64, cfi: bool) returns (cf: bool, r : bv64)
 {
    var i:int := (x as int) + (y as int) + bool_to_int(cfi);
    r:= x + y + bool_to_bv64(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -53,7 +53,7 @@ method addcarry128(x: bv128, y: bv128, cfi: bool) returns (cf: bool, r : bv128)
 {
    var i:int := (x as int) + (y as int) + bool_to_int(cfi);
    r:= x + y + bool_to_bv128(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -61,7 +61,7 @@ method addcarry256(x: bv256, y: bv256, cfi: bool) returns (cf: bool, r : bv256)
 {
    var i:int := (x as int) + (y as int) + bool_to_int(cfi);
    r:= x + y + bool_to_bv256(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -69,7 +69,7 @@ method subcarry8(x: bv8, y: bv8, cfi: bool) returns (cf: bool, r : bv8)
 {
    var i:int := (x as int) - (y as int) - bool_to_int(cfi);
    r:= x - y - bool_to_bv8(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -77,7 +77,7 @@ method subcarry16(x: bv16, y: bv16, cfi: bool) returns (cf: bool, r : bv16)
 {
    var i:int := (x as int) - (y as int) - bool_to_int(cfi);
    r:= x - y - bool_to_bv16(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -85,7 +85,7 @@ method subcarry32(x: bv32, y: bv32, cfi: bool) returns (cf: bool, r : bv32)
 {
    var i:int := (x as int) - (y as int) - bool_to_int(cfi);
    r:= x - y - bool_to_bv32(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -93,7 +93,7 @@ method subcarry64(x: bv64, y: bv64, cfi: bool) returns (cf: bool, r : bv64)
 {
    var i:int := (x as int) - (y as int) - bool_to_int(cfi);
    r:= x - y - bool_to_bv64(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -101,7 +101,7 @@ method subcarry128(x: bv128, y: bv128, cfi: bool) returns (cf: bool, r : bv128)
 {
    var i:int := (x as int) - (y as int) - bool_to_int(cfi);
    r:= x - y - bool_to_bv128(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
@@ -109,7 +109,7 @@ method subcarry256(x: bv256, y: bv256, cfi: bool) returns (cf: bool, r : bv256)
 {
    var i:int := (x as int) - (y as int) - bool_to_int(cfi);
    r:= x - y - bool_to_bv256(cf);
-   cf := i == (r as int);
+   cf := i != (r as int);
    return;
 }
 
