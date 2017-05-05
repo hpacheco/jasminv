@@ -1,0 +1,49 @@
+Name:               Jasmin Verifier
+Version:            0.0.1
+Description:        Jasmin Verification Tool
+License:            GPL
+License-file:       COPYING
+Author:             Cryptography and Information Security Group, HASLab - INESC TEC and Universidade do Minho
+Maintainer:         Hugo Pacheco <hpacheco@gmail.com>
+Bug-reports:        mailto:hpacheco@gmail.com
+Stability:          experimental
+Homepage:           
+Category:           Compiler, Cryptography, Language
+Build-Type:         Simple
+Cabal-Version:      >=1.6
+Tested-with:        GHC==7.10.2
+Synopsis:           Jasmin Verifier
+
+Extra-Source-Files: README.md examples
+Data-files: imports/*.dfy
+
+Executable jasminv
+  Main-is:          Main.hs
+  Other-Modules:
+                        Language.Jasmin.Parser.Lexer
+  Hs-source-dirs:   src
+  Build-Depends:    posix-escape, filepath, process, split, text, shelly, containers, cmdargs, base, mtl, transformers, safe, digits, binary, bytestring, syb, array, hashable, parsec, parsec-numbers, pretty, deepseq, deepseq-generics, linguistic-ordinals >= 0.1.0.1
+  Build-Tools:      alex
+
+Library
+  exposed-modules:
+                        Language.Jasmin.Parser.Parser
+                        Language.Jasmin.Parser.Tokens
+                        Language.Jasmin.Syntax
+                        Language.Vars
+                        Language.Jasmin.IO
+                        Language.Jasmin.TypeChecker.TyInfo
+                        Language.Jasmin.TypeChecker
+                        Language.Jasmin.Transformation.Dafny
+                        Language.Location
+                        Language.Position
+                        Text.Parsec.Exts
+                        Text.PrettyPrint.Exts
+                        Options
+                        Utils
+  Other-Modules:
+                        Language.Jasmin.Parser.Lexer
+                        Paths_Jasmin
+  Hs-Source-Dirs: src
+  Build-Depends:     posix-escape, filepath, process, split, text, shelly, containers, cmdargs, base, mtl, transformers, safe, digits, binary, bytestring, syb, array, hashable, parsec, parsec-numbers, pretty, deepseq, deepseq-generics, linguistic-ordinals >= 0.1.0.1
+  Build-Tools:      alex
