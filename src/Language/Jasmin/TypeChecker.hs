@@ -180,12 +180,11 @@ tt_param pp = tt_global $ do
     let l = loc $ ppa_name pp
     ty <- tt_type (ppa_ty pp)
     e <- tt_expr (ppa_init pp)
-    let ety = locTy e
-    when (funit ty /= funit ety) $ tyError l $ TypeMismatch ty ety
+    e' <- check_ty_assign l e ty
     let Pident ln n = ppa_name pp
     let x = Pident (tyInfoLoc ty ln) n
     addVar x
-    return $ Pparam ty x e
+    return $ Pparam ty x e'
 
 tt_lvalue :: TcK m => Plvalue Position -> TcM m (Plvalue TyInfo)
 tt_lvalue (Plvalue l v) = do
@@ -194,6 +193,13 @@ tt_lvalue (Plvalue l v) = do
 
 tt_lvalue_r :: TcK m => Position -> Plvalue_r Position -> TcM m (Plvalue_r TyInfo,Maybe (Ptype TyInfo))
 tt_lvalue_r p PLIgnore = return (PLIgnore,Nothing)
+tt_lvalue_r l (PLParens e) = do
+    e' <- mapM tt_lvalue e
+    let tys = map locTy' e'
+    t <- if all isJust tys
+        then liftM Just $ tt_concat_types l (map fromJust tys)
+        else return Nothing
+    return (PLParens e',t)
 tt_lvalue_r p (PLVar x) = do
     x' <- tt_var x True
     return (PLVar x',Just $ locTy x')
@@ -220,8 +226,12 @@ tt_expr_of_lvalue (Plvalue i lv) = do
     e <- tt_expr_of_lvalue' p lv
     return $ Pexpr i e
   where
+    tt_expr_of_lvalue' :: TcK m => Position -> Plvalue_r TyInfo -> TcM m (Pexpr_r TyInfo)
     tt_expr_of_lvalue' p (PLVar x) = return $ PEVar x
     tt_expr_of_lvalue' p (PLArray x i) = return $ PEGet x i
+    tt_expr_of_lvalue' p (PLParens es) = do
+        es' <- mapM (tt_expr_of_lvalue) es
+        return $ PEParens es'
     tt_expr_of_lvalue' p (PLMem t x e) = return $ PEFetch t x e
     tt_expr_of_lvalue' p lv = tyError p $ InvalidLRValue (Plvalue () $ funit lv)
 
@@ -246,14 +256,14 @@ tt_opsrc e1 (Just eqop) pe = do
     return $ BinOp eqop e1 pe'
 tt_opsrc lv Nothing pe = do
     pe' <- tt_expr pe
-    pe'' <- tt_shift_expr lv pe'
-    return $ NoOp pe''
+--    pe'' <- tt_shift_expr lv pe'
+    return $ NoOp pe'
 
 -- special shift expressions
-tt_shift_expr :: TcK m => Eqoparg -> Pexpr TyInfo -> TcM m (Pexpr TyInfo)
-tt_shift_expr lv@(locTy -> TWord wlv) re@(Pexpr _ (PEOp2 op@(flip elem [Shr2,Shl2] -> True) (Pexpr (infoTy -> TWord wtot) (PEParens es)) n@(locTy -> TInt))) = do
-    return $ Pexpr (loc lv) $ Pcast wlv $ Pexpr (loc re) $ PEOp2 Shr2 re (intPexpr $ toEnum $ wordSize wtot - wordSize wlv)
-tt_shift_expr lv re = return re
+--tt_shift_expr :: TcK m => Eqoparg -> Pexpr TyInfo -> TcM m (Pexpr TyInfo)
+--tt_shift_expr lv@(locTy -> TWord wlv) re@(Pexpr _ (PEOp2 op@(flip elem [Shr2,Shl2] -> True) (Pexpr (infoTy -> TWord wtot) (PEParens es)) n@(locTy -> TInt))) = do
+--    return $ Pexpr (loc lv) $ Pcast wlv $ Pexpr (loc re) $ PEOp2 Shr2 re (intPexpr $ toEnum $ wordSize wtot - wordSize wlv)
+--tt_shift_expr lv re = return re
 
 carry_op :: Peop2 -> Op
 carry_op Add2 = Oaddcarry
@@ -326,6 +336,14 @@ tt_instr_r p (PIAssign ls eqop pe Nothing) = do
         mki [lv] (NoScalOp (NoOp e)) = do
             forM (locTy' lv) (check_ty_assign p e)
             return $ PIAssign [lv] RawEq e Nothing
+        -- carry-less operations
+        mki lvs (NoScalOp (BinOp o@(flip elem [Mul2] -> True) e1 e2)) = do
+            let t1 = locTy e1
+            check_ty p TPWord t1
+            e2 <- check_ty_assign p e2 (locTy e1)
+            lvs <- check_sig_lvs p False [locTy e1] lvs
+            let e = Pexpr (tyInfoLoc t1 p) $ PEOp2 o e1 e2
+            return $ PIAssign lvs RawEq e Nothing
         -- carry operations without explicit input carry flag
         mki lvs (NoScalOp (BinOp o@(flip elem [Add2,Sub2] -> True) e1 e2)) = do
             check_ty p TPWord (locTy e1)
@@ -552,10 +570,37 @@ check_sig_lvs p canrem sig_ lvs | nlvs > nsig_ = tyError p $ LvalueTooWide
                                 | not canrem && nlvs < nsig_ = tyError p $ LvalueTooNarrow
                                 | otherwise = do
     let (sig_1,sig_2) = splitAt (nsig_ - nlvs) sig_
-    forM_ (zip sig_2 (map locTy' lvs)) $ \(t1,mbt2) -> mapM_ (check_ty_eq p t1) mbt2
-    return $ map (\s -> Plvalue (tyInfoLoc s p) PLIgnore) sig_1 ++ lvs
+    lvs' <- forM (zip sig_2 lvs) $ \(t1,lv) -> check_lvalue_ty t1 lv
+    return $ map (\s -> Plvalue (tyInfoLoc s p) PLIgnore) sig_1 ++ lvs'
   where
     nsig_ = length sig_
     nlvs = length lvs
+
+check_lvalue_ty :: TcK m => Ptype TyInfo -> Plvalue TyInfo -> TcM m (Plvalue TyInfo)
+check_lvalue_ty t1 lv@(Plvalue ilv lvr) = do
+    case infoTy' ilv of
+        Just t2 -> check_ty_eq p t1 t2 >> return lv
+        Nothing -> check_lvalue_ty' lvr
+  where
+    p = infoLoc ilv
+    check_lvalue_ty' PLIgnore = return $ Plvalue (tyInfoLoc t1 p) PLIgnore
+    check_lvalue_ty' (PLParens [e]) = do
+        e' <- check_lvalue_ty t1 e
+        return $ Plvalue (loc e') $ PLParens [e]
+    check_lvalue_ty' (PLParens es) = do
+        let etys = map locTy' es
+        let tys = catMaybes etys
+        wtot <- tt_as_word p t1
+        ws <- mapM (tt_as_word p) tys
+        if length ws >= pred (length etys)
+            then do
+                let tgap = TWord $ fromJust $ sizeWord $ wordSize wtot - sum (map wordSize ws)
+                es' <- forM es $ \e -> case locTy' e of
+                    Just _ -> return e
+                    Nothing -> check_lvalue_ty tgap e
+                return $ Plvalue (tyInfoLoc t1 p) $ PLParens es'
+            else genError p $ text "ambiguous left value"
+    check_lvalue_ty' lv = genError p $ text "unexpected left value"
+
 
 

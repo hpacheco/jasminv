@@ -210,6 +210,7 @@ data Plvalue_r info
   | PLVar   (Pident info)
   | PLArray (Pident info) (Pexpr info)
   | PLMem   (Maybe (Ptype info)) (Pident info) (Pexpr info)
+  | PLParens [Plvalue info]
     deriving (Eq,Ord,Show,Data,Typeable,Generic,Functor)
 instance Binary info => Binary (Plvalue_r info)
 instance Hashable info => Hashable (Plvalue_r info)
@@ -227,6 +228,9 @@ instance Monad m => PP m (Plvalue_r info) where
         pv <- pp v
         pe <- pp e
         return $ pct <> PP.brackets (pv <+> PP.text "+" <+> pe) 
+    pp (PLParens ps) = do
+        pps <- mapM pp ps
+        return $ PP.parens $ PP.sepBy pps PP.comma
 
 type Plval = Plvalue ()
 
@@ -519,6 +523,9 @@ expr_of_lvalue (Plvalue l v) = case v of
     (PLVar x) -> Just $ Pexpr l $ PEVar x
     (PLArray v i) -> Just $ Pexpr l $ PEGet v i
     (PLMem ct v e) -> Just $ Pexpr l $ PEFetch ct v e
+    PLParens es -> do
+        es' <- mapM expr_of_lvalue es
+        return $ Pexpr l $ PEParens es'
     PLIgnore -> Nothing
 
 instance (Vars Piden m info) => Vars Piden m (Parg info) where
@@ -630,6 +637,9 @@ instance (Vars Piden m info) => Vars Piden m (Plvalue_r info) where
         v' <- f v
         e' <- inRHS $ f e
         return $ PLMem t' v' e'
+    traverseVars f (PLParens es) = do
+        es' <- mapM f es
+        return $ PLParens es'
     
     substL (PLVar v) = substL v
     substL e = return Nothing

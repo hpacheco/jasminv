@@ -23,7 +23,7 @@ timelimit = 10 * 60
 buildTestTree :: IO Test
 buildTestTree = do
     tests1 <- buildTestDirectoryTree "resources/jasmin-lang/compiler" ".mil"
-    tests2 <- buildTestDirectoryTree "resources/qhasm-translator" ".mli"
+    tests2 <- buildTestDirectoryTree "resources/qhasm-translator" ".mil"
     return $ TestList [tests1,tests2]
     
 buildLabeledTestDirectoryTree n path ext = liftM (TestLabel n) (buildTestDirectoryTree path ext)

@@ -114,7 +114,8 @@ peqop = toK EQ_ RawEq
 plvalue_r :: Monad m => ParserT m (Plvalue_r Position)
 plvalue_r = toK UNDERSCORE PLIgnore
         <|> apA2 var (optionMaybe $ brackets pexpr) (\x mbi -> case mbi of { Nothing -> PLVar x; Just i -> PLArray x i })
-        <|> apA6 (optionMaybe (parens ptype_)) (tok LBRACK) var (tok PLUS) pexpr (tok RBRACK) (\ct _ v _ e _ -> PLMem ct v e)
+        <|> apA (parens (plist1 plvalue COMMA)) (\es -> PLParens es)
+        <||> apA6 (optionMaybe (parens ptype_)) (tok LBRACK) var (tok PLUS) pexpr (tok RBRACK) (\ct _ v _ e _ -> PLMem ct v e)
         <?> "plvalue_r"
 
 plvalue :: Monad m => ParserT m (Plvalue Position)
@@ -134,7 +135,7 @@ fordir :: Monad m => ParserT m Fordir
 fordir = toK TO Up <|> toK DOWNTO Down
 
 lval :: Monad m => ParserT m [Plvalue Position]
-lval = (tuple1 plvalue)
+lval = (rtuple1 plvalue)
 
 pinstr :: Monad m => ParserT m (Pinstr Position)
 pinstr = liftM (\(Loc l b) -> Pinstr l b) (locp pinstr_r) <?> "pinstr"

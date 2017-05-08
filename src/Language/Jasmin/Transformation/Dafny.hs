@@ -273,28 +273,44 @@ assign p xs (mb,pe) = do
         Just ys -> when (length xs == length ys) $ mapM_ (uncurry copy) (zip vxs ys)
     return $ sepBy pxs comma <+> text ":=" <+> pe <> semicolon
 
--- left = expression, right = update
+-- left = variable, right = update
 passToDafny' :: DafnyK m => Position -> AnnKind -> Plvalue TyInfo -> Either ([Pexpr TyInfo],Doc) Doc -> DafnyM m (Doc,AnnsDoc,AnnsDoc)
-passToDafny' p annK lv@(Plvalue _ PLIgnore) _ = return (PP.empty,[],[])
-passToDafny' p annK lv@(Plvalue _ (PLVar v)) (Left (re,pre)) = do
-    (plv,annlv) <- plvalueToDafny annK IsPrivate lv
-    pass <- assign p [(lv,plv)] (Just re,pre)
-    return (pass,[],annlv)
-passToDafny' p annK lv@(Plvalue _ (PLVar v)) (Right upd) = do
-    (plv,annlv) <- plvalueToDafny annK IsPrivate lv
-    pass <- assign p [(lv,plv)] (Nothing,plv <> upd)
-    return (pass,annlv,annlv)
-passToDafny' p annK lv@(Plvalue _ (PLArray v i)) (Left (re,pre)) = do
-    (pi,anni) <- pexprToDafny annK IsCt i
-    (plv,annlv) <- plvalueToDafny annK IsPrivate lv
-    (doc,annpre,annpos) <- passToDafny' p annK (varPlvalue v) (Right $ brackets (parens (pi <+> text "as int") <+> text ":=" <+> pre))
-    return (doc,anni++annlv++annpre,annlv++annpos)
-passToDafny' p annK lv@(Plvalue _ (PLArray v i)) (Right upd) = do
-    (pi,anni) <- pexprToDafny annK IsCt i
-    (plv,annlv) <- plvalueToDafny annK IsPrivate lv
-    (doc,annpre,annpos) <- passToDafny' p annK (varPlvalue v) (Right $ brackets (parens (pi <+> text "as int") <+> text ":=" <+> plv <> upd))
-    return (doc,anni++annlv++annpre,annlv++annpos)
-passToDafny' p annK lv@(Plvalue _ (PLMem {})) _ = genError p $ text "unsupported assignment to lmem"
+passToDafny' p annK lv@(Plvalue li lvr) re = passToDafny'' lvr re
+    where
+    passToDafny'' PLIgnore re = return (PP.empty,[],[])
+    passToDafny'' (PLVar v) (Left (re,pre)) = do
+        (plv,annlv) <- plvalueToDafny annK IsPrivate lv
+        pass <- assign p [(lv,plv)] (Just re,pre)
+        return (pass,[],annlv)
+    passToDafny'' (PLVar v) (Right upd) = do
+        (plv,annlv) <- plvalueToDafny annK IsPrivate lv
+        pass <- assign p [(lv,plv)] (Nothing,plv <> upd)
+        return (pass,annlv,annlv)
+    passToDafny'' (PLParens ps) (Left (re,pre)) = do
+        let TWord (wordSize -> wtot) = infoTy li
+        let mask wx = text "0x" <> hcat (replicate (div (wtot-wx) 4) $ text "0") <> hcat (replicate (div wx 4) $ text "F")
+        let getbits offset [] = return (PP.empty,[],[])
+            getbits offset (Plvalue tx PLIgnore:xs) = do
+                let TWord (wordSize -> wx) = infoTy tx 
+                getbits (offset + wx) xs
+            getbits offset (x:xs) = do
+                (ppx,annx) <- plvalueToDafny annK IsPrivate x
+                let TWord (wordSize -> wx) = locTy x
+                let px = ppx <+> text ":=" <+> shift_right pre (wtot - offset - wx) <+> text "&" <+> (mask wx) <> semicolon
+                (pxs,[],annxs) <- getbits (offset + wx) xs
+                return (px $+$ px,[],annx++annxs)
+        getbits 0 ps
+    passToDafny'' (PLArray v i) (Left (re,pre)) = do
+        (pi,anni) <- pexprToDafny annK IsCt i
+        (plv,annlv) <- plvalueToDafny annK IsPrivate lv
+        (doc,annpre,annpos) <- passToDafny' p annK (varPlvalue v) (Right $ brackets (parens (pi <+> text "as int") <+> text ":=" <+> pre))
+        return (doc,anni++annlv++annpre,annlv++annpos)
+    passToDafny'' (PLArray v i) (Right upd) = do
+        (pi,anni) <- pexprToDafny annK IsCt i
+        (plv,annlv) <- plvalueToDafny annK IsPrivate lv
+        (doc,annpre,annpos) <- passToDafny' p annK (varPlvalue v) (Right $ brackets (parens (pi <+> text "as int") <+> text ":=" <+> plv <> upd))
+        return (doc,anni++annlv++annpre,annlv++annpos)
+    passToDafny'' _ _ = genError p $ text "unsupported assignment"
         
 plvalueToDafny :: DafnyK m => AnnKind -> CtMode -> Plvalue TyInfo -> DafnyM m (Doc,AnnsDoc)
 plvalueToDafny annK ct lv = do
@@ -360,8 +376,6 @@ parens_exprToDafny annK ct i es = add 0 es
         let TWord (wordSize -> we) = infoTy $ loc e
         (pes,annes) <- add (offset+we) es
         return (shift_left pe we <+> char '+' <+> pes,anne++annes)
-    shift_left x 0 = x
-    shift_left x n = x <+> text "<<" <+> int n
 
 procCallArgsToDafny :: DafnyK m => AnnKind -> [Pexpr TyInfo] -> DafnyM m ([Doc],AnnsDoc)
 procCallArgsToDafny annK es = do
@@ -750,3 +764,8 @@ removeDecClassConsts ((rs,isg1),(ws,isg2)) = do
     let rs' = Map.filterWithKey (\k v -> isNothing $ Map.lookup k ks) rs
     let ws' = Map.filterWithKey (\k v -> isNothing $ Map.lookup k ks) ws
     return ((rs',isg1),(ws',isg2))
+
+shift_left x 0 = x
+shift_left x n = x <+> text "<<" <+> int n
+shift_right x 0 = x
+shift_right x n = x <+> text ">>" <+> int n
