@@ -87,7 +87,7 @@ non2expr_r = apA2 ident (parens_tuple pexpr) (\fname args -> PECall fname args)
       <|> tokWith getInt
       <|> apA2 peop1 non2expr (\o e -> PEOp1 o e)
 --      <|> apA3 non2expr peop2 non2expr (\e1 o e2 -> PEOp2 o e1 e2)
-      <|> apA (parens pexpr) (\e -> PEParens e)
+      <|> apA (parens_tuple pexpr) (\e -> PEParens e)
       <||> apA6 (optionMaybe $ parens ptype_) (tok LBRACK) var (tok PLUS) pexpr (tok RBRACK) (\ct _ v _ e _ -> PEFetch ct v e)
       <?> "non2expr_r"
   where
@@ -157,25 +157,28 @@ storage = toK REG Reg
       <|> toK INLINE Inline
       <?> "storage"
  
-pvardecl :: Monad m => ParserT m (Pstotype Position,Pident Position)
-pvardecl = stor_type >*< var <?> "pvardecl"
+pbodyarg :: Monad m => ParserT m (Pbodyarg Position)
+pbodyarg = apA3 stor_type var (tok SEMICOLON) (\ty n _ -> Pbodyarg ty n) <?> "pvardecl"
 
 pfunbody :: Monad m => ParserT m (Pfunbody Position)
 pfunbody = apA5
     (tok LBRACE)
-    (many $ postfix pvardecl (tok SEMICOLON))
+    (many pbodyarg)
     (many pinstr)
     (optionMaybe $ tok RETURN *> tuple var <* tok SEMICOLON)
     (tok RBRACE)
     (\_ vs is rt _ -> Pfunbody vs is rt)
     <?> "pfunbody"
 
+parg :: Monad m => ParserT m (Parg Position)
+parg = apA2 (stor_type) (optionMaybe var) (\ty n -> Parg ty n)
+
 pfundef :: Monad m => ParserT m (Pfundef Position)
 pfundef = apA6
     (optionMaybe pcall_conv)
     (locp $ tok FN)
     ident
-    (parens_tuple (stor_type >*< optionMaybe var))
+    (parens_tuple parg)
     (optionMaybe $ prefix (tok RARROW) (tuple stor_type))
     pfunbody
     (\cc (Loc p _) name args rty body -> Pfundef cc name args rty body p)
@@ -206,7 +209,7 @@ top = apA pfundef PFundef
 
 -- (* -------------------------------------------------------------------- *)
 module_ :: Monad m => ParserT m (Pprogram Position)
-module_ = (many top) <* tok TokenEOF <?> "module_"
+module_ = (liftM Pprogram) ((many top) <* tok TokenEOF) <?> "module_"
 
 -- (* -------------------------------------------------------------------- *)
 

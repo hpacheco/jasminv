@@ -32,7 +32,7 @@ By default, the tool will typecheck and verify an input Jasmin program:
 #### Tests:
 For running tests, you can simply run:
 ```
-runhaskell tests/Tests.hs
+cabal test
 ```
 For nice test output, you can run instead:
 ```

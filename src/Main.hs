@@ -81,7 +81,7 @@ genDafny opts prelude isLeak prog = do
 
 verifyDafny :: (GenVar Piden m,MonadIO m) => Options -> Pprogram TyInfo -> StatusM m ()
 verifyDafny opts prog = do
-    let fn = dropExtension $ posFileName $ infoLoc $ pprogramLoc prog
+    let fn = dropExtension $ posFileName $ infoLoc $ loc prog
     when (verify' opts /= NoneV) $ do
         let dfyfile = fn ++ ".dfy"
         let dfylfile = fn ++ "_leak.dfy"

@@ -33,7 +33,7 @@ $underscore = _
 @identifier = @ident+
 
 @declit   = (\-?$digit+)
-@hexlit   = (0x#hexdigit+)
+@hexlit   = (0x$hexdigit+)
 
 tokens :-
 

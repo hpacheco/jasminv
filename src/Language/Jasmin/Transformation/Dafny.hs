@@ -35,14 +35,13 @@ toDafny :: DafnyK m => FilePath -> Bool -> Pprogram TyInfo -> m (Either JasminEr
 toDafny prelude leakMode prog = runExceptT $ flip State.evalStateT (DafnySt leakMode Nothing [] KeepF Map.empty) $ do
     dfy <- liftIO $ readFile prelude
     let pdfy = text dfy
-    let pname = dropExtension $ takeFileName $ posFileName $ infoLoc $ pprogramLoc prog
+    let pname = dropExtension $ takeFileName $ posFileName $ infoLoc $ loc prog
     pprog <- pprogramtoDafny prog
-    let pimport = text "import opened prelude"
     let pcode = pprog
     return $ pdfy $+$ pcode
 
 pprogramtoDafny :: DafnyK m => Pprogram TyInfo -> DafnyM m Doc
-pprogramtoDafny prog = do
+pprogramtoDafny (Pprogram prog) = do
     pprog <- mapM pitemToDafny prog
     return $ vcat pprog
     --return $ text "class" $+$ vbrackets pprog
@@ -57,16 +56,17 @@ pfundefToDafny def@(Pfundef cc pn pargs pret (Pfunbody pbvars pbinstrs pbret) in
     ppn <- procidenToDafny pn
     (ppargs,parganns) <- procedureArgsToDafny IsPrivate False pargs
     (pbvars',pbinstrs',ssargs) <- newDafnyArgs p pargs
+    newvs <- lift2 $ bvsSet pbvars'
     (newpbinstrs,newpbret) <- lift2 $ substVars dontStop ssargs False Map.empty (pbinstrs,pbret)
     (pret,pretanns) <- case pret of
         Nothing -> return (PP.empty,[])
         Just results -> do
             tvs <- forM results $ \t -> do
                 vret::Maybe Piden <- lift2 $ liftM Just $ mkVar "result" >>= newVar
-                return (t,fmap (fconst $ pstotypeTyInfo t) vret)
+                return (Parg t $ fmap (fconst $ pstotypeTyInfo t) vret)
             (pret,pretanns) <- procedureArgsToDafny IsPrivate True tvs
             return (text "returns" <+> pret,pretanns)
-    let cl = infoDecClass info
+    cl <- removeDecClassConsts $ infoDecClass info
     pcl <- decClassToDafny cl
     (pbody1,annb1) <- pbodyargsToDafny IsPrivate (pbvars++pbvars')
     (pbody2,annb2) <- pblock_rToDafny info (pbinstrs'++newpbinstrs)
@@ -77,7 +77,7 @@ pfundefToDafny def@(Pfundef cc pn pargs pret (Pfunbody pbvars pbinstrs pbret) in
             return (text "return" <+> sepBy perets comma <> semicolon)
     let tag = text "method"
     let anns' = parganns ++ pretanns ++ annb1 ++ annb2
-    annframes <- propagateDafnyAssumptions p EnsureK cl
+    annframes <- dropAssumptions newvs $ propagateDafnyAssumptions p EnsureK cl
     return $ (tag <+> ppn <+> ppargs <+> pret $+$ pcl $+$ annLinesProcC annframes $+$ annLinesProcC anns' $+$ vbraces (pbody1 $+$ pbody2 $+$ pbody3))
   where
     did = pidentToDafnyId pn
@@ -89,11 +89,11 @@ newDafnyArgs l xs = do
     return (concat as,concat is,mconcat ss)
 
 newDafnyArg :: DafnyK m => Position -> Parg TyInfo -> DafnyM m ([Pbodyarg TyInfo],[Pinstr TyInfo],SubstVars Piden)
-newDafnyArg l (_,Nothing) = return ([],[],mempty)
-newDafnyArg l (stoty,Just oldv@(Pident i oldn)) = do
+newDafnyArg l (Parg _ Nothing) = return ([],[],mempty)
+newDafnyArg l (Parg stoty (Just oldv@(Pident i oldn))) = do
     newv@(Pident _ newn)::Piden <- lift2 $ newVar (funit oldv)
     let newv = Pident i newn
-    let barg = (stoty,newv)
+    let barg = (Pbodyarg stoty newv)
     let rs = (Map.singleton (funit oldv) (infoTy i,False),False)
     let ws = (Map.singleton (funit newv) (infoTy i,False),False)
     let cl = (rs,ws)
@@ -108,8 +108,8 @@ pbodyargsToDafny ct xs = do
     return (vcat ys,concat anns)
 
 pbodyargToDafny :: DafnyK m => CtMode -> Pbodyarg TyInfo -> DafnyM m (Doc,AnnsDoc)
-pbodyargToDafny ct (t,v) = do
-    (parg,anns) <- pargToDafny False StmtK ct (t,Just v)
+pbodyargToDafny ct (Pbodyarg t v) = do
+    (parg,anns) <- pargToDafny False StmtK ct $ Parg t (Just v)
     let (anns',parg1) = annLinesC StmtKC anns
     return (parg $+$ parg1,anns')
 
@@ -124,8 +124,8 @@ procedureArgToDafny ct isPost v = do
     pargToDafny True annK ct v
 
 pargToDafny :: DafnyK m => Bool -> AnnKind -> CtMode -> Parg TyInfo -> DafnyM m (Doc,AnnsDoc)
-pargToDafny isProcArg annK ct (ty,Nothing) = ptypeToDafny annK Nothing (snd ty)
-pargToDafny isProcArg annK ct (ty,Just v) = do
+pargToDafny isProcArg annK ct (Parg ty Nothing) = ptypeToDafny annK Nothing (snd ty)
+pargToDafny isProcArg annK ct (Parg ty (Just v)) = do
     vs <- lift2 $ usedVars v
     pv <- pidentToDafny v
     (pty,annty) <- ptypeToDafny annK (Just v) (snd ty)
@@ -172,7 +172,7 @@ pinstr_rToDafny l (PIFor v dir from to (Pblock lb is)) = do
     let clinc = ((Map.singleton (funit v) (vty,False),False),(Map.singleton (funit v) (vty,False),False))
     let inc = Pinstr (decInfoLoc clinc p) $ PIAssign [varPlvalue v] RawEq (Pexpr (loc v) $ PEOp2 op2 (varPexpr v) (Pexpr (loc v) $ PEInt 1)) Nothing
     let b' = Pblock lb' $ is ++ [inc]
-    let cl = infoDecClass $ loc b'
+    cl <- removeDecClassConsts $ infoDecClass $ loc b'
     leakMode <- getLeakMode
     pfrom <- pp from
     pto <- pp to
@@ -188,7 +188,7 @@ pinstr_rToDafny l (PIFor v dir from to (Pblock lb is)) = do
     return (pass $+$ while,ann2++anns)
 pinstr_rToDafny l (PIWhile Nothing e (Just s)) = do
     let p = infoLoc l
-    let cl = infoDecClass $ loc s
+    cl <- removeDecClassConsts $ infoDecClass $ loc s
     annframes <- propagateDafnyAssumptions p InvariantK cl
     (pe,anne) <- pexprToDafny InvariantK IsCt e
     (ps,ann2) <- pblockToDafny s
@@ -257,7 +257,7 @@ passToDafny p annK ls e = do
         ls' <- forM ls $ \l -> do
             Pident () n <- lift2 $ mkVar "aux" >>= newVar
             return $ Pident (loc l) n
-        (pdefs,annsdefs) <- State.mapAndUnzipM (\l -> pargToDafny False StmtK IsPrivate (infoStoty $ loc l,Just l)) ls'        
+        (pdefs,annsdefs) <- State.mapAndUnzipM (\l -> pargToDafny False StmtK IsPrivate $ Parg (infoStoty $ loc l) (Just l)) ls'        
         ppls' <- mapM pidentToDafny ls'
         asse <- assign p (zip (map varPlvalue ls') ppls') e
         (assls,annpre,annpos) <- Utils.mapAndUnzip3M (uncurry (passToDafny' p annK)) (zip ls $ map Left $ zip (map (\x -> [varPexpr x]) ls') ppls')
@@ -266,7 +266,7 @@ passToDafny p annK ls e = do
 assign :: DafnyK m => Position -> [(Plvalue TyInfo,Doc)] -> (Maybe [Pexpr TyInfo],Doc) -> DafnyM m Doc
 assign p xs (mb,pe) = do
     let (vxs,pxs) = unzip xs
-    let copy (Plvalue _ (PLVar v)) (Pexpr _ (PEVar v')) = copyDafnyAssumptions p v v'
+    let copy (Plvalue _ (PLVar v)) (Pexpr _ (PEVar v')) = copyDafnyAssumptions p v' v
         copy v e = return ()
     case mb of
         Nothing -> return ()
@@ -321,7 +321,7 @@ pexpr_rToDafny annK ct l (PEBool False) = return (text "false",[])
 pexpr_rToDafny annK ct l (Pcast w e) = do
     (pe,anne) <- pexprToDafny annK ct e
     let t = wsizeToDafny w
-    return (pe <+> text "as" <+> t,anne)
+    return (parens pe <+> text "as" <+> t,anne)
 pexpr_rToDafny annK ct l (PEInt i) = return (integer i,[])
 pexpr_rToDafny annK ct l e@(PEVar v) = do
     ks <- State.gets consts
@@ -340,13 +340,28 @@ pexpr_rToDafny annK ct l e@(PEGet n i) = do
     annp <- genDafnyAssumptions annK ct vs pse l
     return (pse,annn++anni++annp)
 pexpr_rToDafny annK ct l fe@(PEFetch t v e) = genError (infoLoc l) $ text "expression fetch not yet supported"
-pexpr_rToDafny annK ct l (PEParens e) = pexprToDafny annK ct e
+pexpr_rToDafny annK ct l (PEParens es) = parens_exprToDafny annK ct l es
 pexpr_rToDafny annK ct l e@(PEOp1 o e1) = do
     vs <- lift2 $ usedVars e
     peop1ToDafny annK ct l vs o e1
 pexpr_rToDafny annK ct l e@(PEOp2 o e1 e2) = do
     vs <- lift2 $ usedVars e
     peop2ToDafny annK ct l vs o e1 e2
+
+parens_exprToDafny :: DafnyK m => AnnKind -> CtMode -> TyInfo -> [Pexpr TyInfo] -> DafnyM m (Doc,AnnsDoc)
+parens_exprToDafny annK ct i [e] = pexprToDafny annK ct e
+parens_exprToDafny annK ct i es = add 0 es
+    where
+    p = infoLoc i
+    TWord wtot = infoTy i
+    add offset [] = return (PP.empty,[])
+    add offset (e:es) = do
+        (pe,anne) <- pexpr_rToDafny annK ct i $ Pcast wtot e
+        let TWord (wordSize -> we) = infoTy $ loc e
+        (pes,annes) <- add (offset+we) es
+        return (shift_left pe we <+> char '+' <+> pes,anne++annes)
+    shift_left x 0 = x
+    shift_left x n = x <+> text "<<" <+> int n
 
 procCallArgsToDafny :: DafnyK m => AnnKind -> [Pexpr TyInfo] -> DafnyM m ([Doc],AnnsDoc)
 procCallArgsToDafny annK es = do
@@ -729,4 +744,9 @@ dropAssumptions xs m = do
     State.modify $ \env -> env { assumptions = filter aux $ assumptions env }
     m
 
-
+removeDecClassConsts :: DafnyK m => DecClass -> DafnyM m DecClass
+removeDecClassConsts ((rs,isg1),(ws,isg2)) = do
+    ks <- State.gets consts
+    let rs' = Map.filterWithKey (\k v -> isNothing $ Map.lookup k ks) rs
+    let ws' = Map.filterWithKey (\k v -> isNothing $ Map.lookup k ks) ws
+    return ((rs',isg1),(ws',isg2))

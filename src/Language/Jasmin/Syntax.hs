@@ -75,7 +75,7 @@ instance Monad m => PP m Peop2 where
     
 -- (* -------------------------------------------------------------------- *)
 data Pexpr_r info
-  = PEParens (Pexpr info)
+  = PEParens [Pexpr info]
   | PEVar    (Pident info)
   | PEGet    (Pident info) (Pexpr info)
   | PEFetch  (Maybe (Ptype info)) (Pident info) (Pexpr info)
@@ -91,7 +91,9 @@ instance Hashable info => Hashable (Pexpr_r info)
 instance NFData info => NFData (Pexpr_r info) where
     rnf = genericRnf
 instance Monad m => PP m (Pexpr_r info) where
-    pp (PEParens e) = PP.parensM (pp e)
+    pp (PEParens es) = do
+        pes <- mapM pp es
+        return $ PP.parens (PP.sepBy pes PP.comma)
     pp (PEVar v) = pp v
     pp (PEGet v e) = do
         pv <- pp v
@@ -158,6 +160,15 @@ wordSize W32 = 32
 wordSize W64 = 64
 wordSize W128 = 127
 wordSize W256 = 256
+
+sizeWord :: Int -> Maybe Wsize
+sizeWord 8   = Just W8
+sizeWord 16  = Just W16
+sizeWord 32  = Just W32
+sizeWord 64  = Just W64
+sizeWord 128 = Just W128
+sizeWord 256 = Just W256
+sizeWord n = Nothing
 
 data Ptype info = TBool | TInt | TWord Wsize | TArray Wsize (Pexpr info)
     deriving (Data,Eq,Ord,Show,Typeable,Generic,Functor)
@@ -390,7 +401,7 @@ instance NFData info => NFData (Pfunbody info) where
     rnf = genericRnf
 instance Monad m => PP m (Pfunbody info) where
     pp (Pfunbody vars instr ret) = do
-        vs <- mapM (\v -> PP.suffix (PP.ppSpaced3 v) PP.semicolon) vars
+        vs <- mapM pp vars
         is <- mapM pp instr
         r <- PP.ppOptM ret $ \ret -> do
             vs <- PP.sepByM (mapM pp ret) PP.comma
@@ -421,14 +432,12 @@ instance Binary info => Binary (Pfundef info)
 instance Hashable info => Hashable (Pfundef info)
 instance NFData info => NFData (Pfundef info) where
     rnf = genericRnf
-type Parg info = (Pstotype info,Maybe (Pident info))
-type Pbodyarg info = (Pstotype info,Pident info)
 
 instance Monad m => PP m (Pfundef info) where
     pp (Pfundef cc name args ty body info) = do
         pcc <- PP.ppOptM cc pp
         n <- pp name
-        as <- PP.parensM (PP.sepByM (mapM PP.ppSpaced3 args) (PP.text ","))
+        as <- PP.parensM $ PP.sepByM (mapM pp args) (PP.text ",")
         t <- PP.ppOptM ty (\ty -> liftM (PP.text "->" <+>) (PP.sepByM (mapM PP.ppSpaced ty) (PP.text ",")))
         b <- pp body
         return $ pcc <+> PP.text "fn" <+> n <+> as <+> t $+$ b
@@ -437,6 +446,30 @@ instance Location info => Located (Pfundef info) where
     type LocOf (Pfundef info) = info
     loc f = pdf_info f
     updLoc f l = f { pdf_info = l }
+    
+data Parg info = Parg { pa_ty :: Pstotype info, pa_name :: Maybe (Pident info) }
+    deriving (Eq,Ord,Show,Data,Typeable,Generic,Functor)
+instance Binary info => Binary (Parg info)
+instance Hashable info => Hashable (Parg info)
+instance NFData info => NFData (Parg info) where
+    
+instance Monad m => PP m (Parg info) where
+    pp (Parg ty n) = do
+        pty <- pp ty
+        pn <- pp n
+        return $ pty <+> pn
+    
+data Pbodyarg info = Pbodyarg { pba_ty :: Pstotype info, pba_name :: Pident info }
+    deriving (Eq,Ord,Show,Data,Typeable,Generic,Functor)
+instance Binary info => Binary (Pbodyarg info)
+instance Hashable info => Hashable (Pbodyarg info)
+instance NFData info => NFData (Pbodyarg info) where
+
+instance Monad m => PP m (Pbodyarg info) where
+    pp (Pbodyarg ty n) = do
+        pty <- pp ty
+        pn <- pp n
+        return $ pty <+> pn <> PP.semicolon
 
 -- (* -------------------------------------------------------------------- *)
 data Pitem info = PFundef (Pfundef info) | PParam (Pparam info)
@@ -457,16 +490,24 @@ instance Location info => Located (Pitem info) where
     updLoc (PFundef x) l = PFundef $ updLoc x l
 
 -- (* -------------------------------------------------------------------- *)
-type Pprogram info = [Pitem info]
+newtype Pprogram info = Pprogram [Pitem info]
+    deriving (Eq,Ord,Show,Data,Typeable,Generic,Functor)
+instance Binary info => Binary (Pprogram info)
+instance Hashable info => Hashable (Pprogram info)
+instance NFData info => NFData (Pprogram info) where
+    rnf = genericRnf
 
-pprogramLoc :: Location info => Pprogram info -> info
-pprogramLoc [] = noloc
-pprogramLoc (x:xs) = loc x
+instance Monad m => PP m (Pprogram info) where
+    pp (Pprogram xs) = do
+        pxs <- mapM pp xs
+        return $ PP.vcat pxs
 
-ppPprogram :: Monad m => Pprogram info -> m Doc
-ppPprogram xs = do
-    pxs <- mapM pp xs
-    return $ PP.vcat pxs
+instance Location info => Located (Pprogram info) where
+    type LocOf (Pprogram info) = info
+    loc (Pprogram []) = noloc
+    loc (Pprogram (x:xs)) = loc x
+    updLoc (Pprogram []) l = Pprogram []
+    updLoc (Pprogram (x:xs)) l = Pprogram $ updLoc x l : xs
 
 varPexpr :: Pident info -> Pexpr info
 varPexpr v@(Pident l n) = (Pexpr l $ PEVar v)
@@ -479,6 +520,23 @@ expr_of_lvalue (Plvalue l v) = case v of
     (PLArray v i) -> Just $ Pexpr l $ PEGet v i
     (PLMem ct v e) -> Just $ Pexpr l $ PEFetch ct v e
     PLIgnore -> Nothing
+
+instance (Vars Piden m info) => Vars Piden m (Parg info) where
+    traverseVars f (Parg ty n) = do
+        ty' <- f ty
+        n' <- inLHS False $ f n
+        return $ Parg ty' n'
+    
+instance (Vars Piden m info) => Vars Piden m (Pbodyarg info) where
+    traverseVars f (Pbodyarg ty n) = do
+        ty' <- f ty
+        n' <- inLHS False $ f n
+        return $ Pbodyarg ty' n'
+    
+instance (Vars Piden m info) => Vars Piden m (Pprogram info) where
+    traverseVars f (Pprogram x) = do
+        x' <- mapM f x
+        return $ Pprogram x'
 
 instance (Vars Piden m info) => Vars Piden m (Pitem info) where
     traverseVars f (PFundef x) = liftM PFundef $ f x

@@ -22,16 +22,17 @@ timelimit = 10 * 60
 
 buildTestTree :: IO Test
 buildTestTree = do
-    tests <- buildTestDirectoryTree "resources"
-    return $ TestList [tests]
+    tests1 <- buildTestDirectoryTree "resources/jasmin-lang/compiler" ".mil"
+    tests2 <- buildTestDirectoryTree "resources/qhasm-translator" ".mli"
+    return $ TestList [tests1,tests2]
     
-buildLabeledTestDirectoryTree n path = liftM (TestLabel n) (buildTestDirectoryTree path)
+buildLabeledTestDirectoryTree n path ext = liftM (TestLabel n) (buildTestDirectoryTree path ext)
 
-buildTestDirectoryTree :: FilePath -> IO Test
-buildTestDirectoryTree path = fold (depth >=? 0) addTestFile (TestList []) path
+buildTestDirectoryTree :: FilePath -> String -> IO Test
+buildTestDirectoryTree path ext = fold (depth >=? 0) (addTestFile ext) (TestList []) path
     
-addTestFile :: Test -> FileInfo -> Test
-addTestFile t i = if evalClause (extension ==? ".mil") i
+addTestFile :: String -> Test -> FileInfo -> Test
+addTestFile ext t i = if evalClause (extension ==? ext) i
     then let p = evalClause filePath i in addTestToTree t (splitPath p) p
     else t
 

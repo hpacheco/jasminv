@@ -24,8 +24,8 @@ import Text.PrettyPrint.Exts
 import GHC.Generics
 import Data.Generics hiding (Generic)
 
-tt_var :: TcK m => Pident Position -> TcM m (Pident TyInfo)
-tt_var (Pident l x) = getVar l (Pident () x)
+tt_var :: TcK m => Pident Position -> Bool -> TcM m (Pident TyInfo)
+tt_var (Pident l x) isWrite = getVar l (Pident () x) isWrite
 
 tt_fun :: TcK m => Pident Position -> TcM m (Pfundef TyInfo)
 tt_fun (Pident l n) = getFun l (Pident () n)
@@ -85,19 +85,30 @@ tt_expr (Pexpr l e) = do
     (e',t) <- tt_expr_r l e
     return $ Pexpr (tyInfoLoc t l) e'
 
+tt_concat_types :: TcK m => Position -> [Ptype TyInfo] -> TcM m (Ptype TyInfo)
+tt_concat_types p [] = genError p $ text "cannot concat empty types"
+tt_concat_types p [x] = return x
+tt_concat_types p xs = do
+    ws <- mapM (liftM wordSize . tt_as_word p) xs
+    let w = sum ws
+    case sizeWord w of
+        Just wsz -> return $ TWord wsz
+        Nothing -> genError p $ text "concat needs to be a word type, not" <+> ppid w
+
 tt_expr_r :: TcK m => Position -> Pexpr_r Position -> TcM m (Pexpr_r TyInfo,Ptype TyInfo)
 tt_expr_r l (PEParens e) = do
-    e' <- tt_expr e
-    return (PEParens e',infoTy $ loc e')
+    e' <- mapM tt_expr e
+    t <- tt_concat_types l (map (infoTy . loc) e')
+    return (PEParens e',t)
 tt_expr_r l (PEBool b) = do
     return (PEBool b,TBool)
 tt_expr_r l (PEInt i) = do
     return (PEInt i,TInt)
 tt_expr_r l (PEVar v) = do
-    v' <- tt_var v
+    v' <- tt_var v False
     return (PEVar v',infoTy $ loc v')
 tt_expr_r l (PEFetch ct x o) = do
-    x' <- tt_var x
+    x' <- tt_var x False
     w <- tt_as_word l (infoTy $ loc x')
     o' <- tt_int o
     ct' <- mapM tt_type ct
@@ -111,7 +122,7 @@ tt_expr_r l (PEFetch ct x o) = do
     return (PEFetch (Just ct'') x' o',ct'')
 tt_expr_r l (PECall {}) = tyError l $ CallNotAllowed
 tt_expr_r l (PEGet x i) = do
-    x' <- tt_var x
+    x' <- tt_var x False
     i' <- tt_int i
     ty <- tt_as_array l (infoTy $ loc x')
     return (PEGet x' i',ty)
@@ -144,22 +155,22 @@ tt_vardecls :: TcK m => [Pbodyarg Position] -> TcM m [Pbodyarg TyInfo]
 tt_vardecls = mapM tt_vardecl
     
 tt_vardecl :: TcK m => Pbodyarg Position -> TcM m (Pbodyarg TyInfo)
-tt_vardecl (t,v) = do
-    (t',Just v') <- tt_vardecl' (t,Just v)
-    return (t',v')
+tt_vardecl (Pbodyarg t v) = do
+    Parg t' (Just v') <- tt_vardecl' $ Parg t (Just v)
+    return (Pbodyarg t' v')
 
 tt_vardecl' :: TcK m => Parg Position -> TcM m (Parg TyInfo)
-tt_vardecl' ((sto,xty),Nothing) = do
+tt_vardecl' (Parg (sto,xty) Nothing) = do
     sto' <- tt_sto sto
     xty' <- tt_type xty
-    return ((sto',xty'),Nothing)
-tt_vardecl' ((sto,xty),Just (Pident l n)) = do
+    return $ Parg (sto',xty') Nothing
+tt_vardecl' (Parg (sto,xty) (Just (Pident l n))) = do
     sto' <- tt_sto sto
     xty' <- tt_type xty
     let info = stotyInfoLoc sto' (xty') l
     let x' = Pident info n
     addVar x'
-    return ((sto',xty'),Just x')
+    return $ Parg (sto',xty') (Just x')
 
 tt_sto :: TcK m => Pstorage -> TcM m Pstorage
 tt_sto = return
@@ -184,15 +195,15 @@ tt_lvalue (Plvalue l v) = do
 tt_lvalue_r :: TcK m => Position -> Plvalue_r Position -> TcM m (Plvalue_r TyInfo,Maybe (Ptype TyInfo))
 tt_lvalue_r p PLIgnore = return (PLIgnore,Nothing)
 tt_lvalue_r p (PLVar x) = do
-    x' <- tt_var x
+    x' <- tt_var x True
     return (PLVar x',Just $ locTy x')
 tt_lvalue_r p (PLArray x pi) = do
-    x' <- tt_var x
+    x' <- tt_var x True
     i <- tt_int pi
     ty <- tt_as_array p (locTy x')
     return (PLArray x' i,Just ty)
 tt_lvalue_r p (PLMem st x pe) = do
-    x' <- tt_var x
+    x' <- tt_var x True
     pe' <- tt_int pe
     w <- tt_as_word p (locTy x')
     st' <- forM st $ \st -> do
@@ -214,30 +225,35 @@ tt_expr_of_lvalue (Plvalue i lv) = do
     tt_expr_of_lvalue' p (PLMem t x e) = return $ PEFetch t x e
     tt_expr_of_lvalue' p lv = tyError p $ InvalidLRValue (Plvalue () $ funit lv)
 
-tt_opsrc :: TcK m => Maybe Eqoparg_r -> Pexpr Position -> TcM m Opsrc
-tt_opsrc eqop pe = do
-    case (pe,eqop) of
-        (Pexpr _ (PEOp2 op pe1 pe2),Nothing) -> do
-            case pe2 of
-                Pexpr _ (PEOp2 op' pe2 pe3) -> do
-                    pe1' <- tt_expr pe1
-                    pe2' <- tt_expr pe2
-                    pe3' <- tt_expr pe3
-                    return $ TriOp op op' pe1' pe2' pe3'
-                _ -> do
-                    pe1' <- tt_expr pe1
-                    pe2' <- tt_expr pe2
-                    return $ BinOp op pe1' pe2'
-        (Pexpr _ (PEOp2 op pe2 pe3),Just (eqop,e1)) -> do
+tt_opsrc :: TcK m => Eqoparg -> Maybe Peop2 -> Pexpr Position -> TcM m Opsrc 
+tt_opsrc lv Nothing (Pexpr _ (PEOp2 op pe1 pe2)) = do
+    case pe2 of
+        Pexpr _ (PEOp2 op' pe2 pe3) -> do
+            pe1' <- tt_expr pe1
             pe2' <- tt_expr pe2
             pe3' <- tt_expr pe3
-            return $ TriOp eqop op e1 pe2' pe3'
-        (_,Just (eqop,e1)) -> do
-            pe' <- tt_expr pe
-            return $ BinOp eqop e1 pe'
-        (_,Nothing) -> do
-            pe' <- tt_expr pe
-            return $ NoOp pe'
+            return $ TriOp op op' pe1' pe2' pe3'
+        _ -> do
+            pe1' <- tt_expr pe1
+            pe2' <- tt_expr pe2
+            return $ BinOp op pe1' pe2'
+tt_opsrc e1 (Just eqop) (Pexpr _ (PEOp2 op pe2 pe3)) = do
+    pe2' <- tt_expr pe2
+    pe3' <- tt_expr pe3
+    return $ TriOp eqop op e1 pe2' pe3'
+tt_opsrc e1 (Just eqop) pe = do
+    pe' <- tt_expr pe
+    return $ BinOp eqop e1 pe'
+tt_opsrc lv Nothing pe = do
+    pe' <- tt_expr pe
+    pe'' <- tt_shift_expr lv pe'
+    return $ NoOp pe''
+
+-- special shift expressions
+tt_shift_expr :: TcK m => Eqoparg -> Pexpr TyInfo -> TcM m (Pexpr TyInfo)
+tt_shift_expr lv@(locTy -> TWord wlv) re@(Pexpr _ (PEOp2 op@(flip elem [Shr2,Shl2] -> True) (Pexpr (infoTy -> TWord wtot) (PEParens es)) n@(locTy -> TInt))) = do
+    return $ Pexpr (loc lv) $ Pcast wlv $ Pexpr (loc re) $ PEOp2 Shr2 re (intPexpr $ toEnum $ wordSize wtot - wordSize wlv)
+tt_shift_expr lv re = return re
 
 carry_op :: Peop2 -> Op
 carry_op Add2 = Oaddcarry
@@ -249,8 +265,8 @@ tt_bool x = expect (loc x) TPBool (infoTy . loc) (tt_expr x)
 tt_int :: TcK m => Pexpr Position -> TcM m (Pexpr TyInfo)
 tt_int x = expect (loc x) TPInt (infoTy . loc) (tt_expr x)
 
-tt_intvar :: TcK m => Pident Position -> TcM m (Pident TyInfo)
-tt_intvar x = expect (loc x) TPInt (infoTy . loc) (tt_var x)
+tt_intvar :: TcK m => Pident Position -> Bool -> TcM m (Pident TyInfo)
+tt_intvar x isWrite = expect (loc x) TPInt (infoTy . loc) (tt_var x isWrite)
 
 tt_instr :: TcK m => Pinstr Position -> TcM m (Pinstr TyInfo)
 tt_instr (Pinstr l i) = do
@@ -267,7 +283,7 @@ tt_instr_r p (PIIf c st sf) = do
 tt_instr_r p (PIFor x d i1 i2 s) = do
     i1' <- tt_int i1
     i2' <- tt_int i2
-    x' <- tt_intvar x
+    x' <- tt_intvar x False
     s' <- tt_block s
     return $ PIFor x' d i1' i2' s'
 tt_instr_r p (PIWhile s1 c s2) = do
@@ -281,7 +297,7 @@ tt_instr_r p (PIAssign ls RawEq (Pexpr _ (PECall f args)) Nothing) = do
     let rty = map (snd) $ Foldable.concat $ pdf_rty f'
     lvs' <- check_sig_lvs p False rty lvs
     args' <- mapM tt_expr args
-    args'' <- check_sig_call p (map (snd . fst) $ pdf_args f') args'
+    args'' <- check_sig_call p (map (snd . pa_ty) $ pdf_args f') args'
     return $ Ccall lvs' (pdf_name f') args''
 tt_instr_r p (PIAssign ls eqop pe Nothing) = do
     lvs <- mapM tt_lvalue ls
@@ -289,14 +305,11 @@ tt_instr_r p (PIAssign ls eqop pe Nothing) = do
             e <- tt_expr pe
             return $ ScalOp eqop e
         mksrc lvs eqop = do
-            eqop' <- case peop2_of_eqop eqop of
-                Nothing -> return Nothing
-                Just op2 -> if null lvs
-                    then tyError p EqOpWithNoLValue
-                    else do
-                        lve <- tt_expr_of_lvalue (last lvs)
-                        return $ Just (op2,lve)
-            opsrc <- tt_opsrc eqop' pe
+            lve' <- if null lvs
+                then tyError p EqOpWithNoLValue
+                else tt_expr_of_lvalue (last lvs) 
+            let eqop' = peop2_of_eqop eqop
+            opsrc <- tt_opsrc lve' eqop' pe
             return $ NoScalOp opsrc    
     src <- mksrc lvs eqop
     let mki [lv] (ScalOp eqop e) = do
@@ -313,11 +326,13 @@ tt_instr_r p (PIAssign ls eqop pe Nothing) = do
         mki [lv] (NoScalOp (NoOp e)) = do
             forM (locTy' lv) (check_ty_assign p e)
             return $ PIAssign [lv] RawEq e Nothing
+        -- carry operations without explicit input carry flag
         mki lvs (NoScalOp (BinOp o@(flip elem [Add2,Sub2] -> True) e1 e2)) = do
             check_ty p TPWord (locTy e1)
             e2 <- check_ty_assign p e2 (locTy e1)
             lvs <- check_sig_lvs p True [TBool,locTy e1] lvs
             return $ Copn lvs (carry_op o) [e1,e2,falsePexpr]
+        -- carry operations with explicit input carry flag
         mki lvs (NoScalOp (TriOp op1@(flip elem [Add2,Sub2] -> True) op2 e1 e2 e3)) | op1 == op2 = do
             check_ty p TPWord (locTy e1)
             e2 <- check_ty_assign p e2 (locTy e1)
@@ -339,7 +354,7 @@ tt_block (Pblock l is) = tt_local $ do
 tt_funbody :: TcK m => Pfunbody Position -> TcM m (Pfunbody TyInfo)
 tt_funbody (Pfunbody vars instrs ret) = tt_local $ do
     vars' <- tt_vardecls vars
-    ret' <- mapM (mapM tt_var) ret
+    ret' <- mapM (mapM (flip tt_var False)) ret
     instrs' <- mapM tt_instr instrs
     return $ Pfunbody vars' instrs' ret'
 
@@ -359,12 +374,11 @@ tt_item (PParam pp) = liftM PParam $ tt_param pp
 tt_item (PFundef pf) = liftM PFundef $ tt_fundef pf
 
 tt_program :: TcK m => Pprogram Position -> TcM m (Pprogram TyInfo)
-tt_program pm = mapM tt_item pm
+tt_program (Pprogram pm) = liftM Pprogram $ mapM tt_item pm
 
 -- * State
 
 type Eqoparg = (Pexpr TyInfo)
-type Eqoparg_r = (Peop2,Eqoparg)
 
 data Opsrc
     = NoOp Eqoparg
@@ -441,7 +455,7 @@ resetDecClass m = do
     x <- m
     State.modify $ \env -> env { decClass = cl }
     return x
-    
+
 withDecClass :: Monad m => TcM m a -> TcM m (a,DecClass)
 withDecClass m = do
     (rs,ws) <- getDecClass
@@ -453,11 +467,16 @@ withDecClass m = do
   where
     mkEmpty xs = (Map.empty,isGlobalDecClassVars xs)
 
-getVar :: TcK m => Position -> Piden -> TcM m (Pident TyInfo)
-getVar l pn@(Pident _ n) = do
+getVar :: TcK m => Position -> Piden -> Bool -> TcM m (Pident TyInfo)
+getVar l pn@(Pident _ n) isWrite = do
     vs <- State.gets vars
     case Map.lookup pn vs of
-        Just (sto,vt) -> return $ Pident (stotyInfoLoc' sto vt l) n
+        Just (sto,vt) -> do
+            let isGlobal = isNothing sto
+            let rs = if isWrite then (Map.empty,isGlobal) else (Map.singleton pn (vt,isGlobal),isGlobal)
+            let ws = if isWrite then (Map.singleton pn (vt,isGlobal),isGlobal) else (Map.empty,isGlobal)
+            State.modify $ \env -> env { decClass = addDecClassVars rs ws (decClass env)  }
+            return $ Pident (stotyInfoLoc' sto vt l) n
         Nothing -> tyError l $ UnknownVar pn (text $ show vs)
 
 addVar :: TcK m => Pident TyInfo -> TcM m ()
