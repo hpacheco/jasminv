@@ -24,6 +24,8 @@ import Control.DeepSeq.Generics hiding (force)
 import Text.Parsec (ParseError(..))
 import Text.PrettyPrint.Exts as PP
 
+import System.IO
+
 data ParserException 
     = LexicalException String
     | ParserException String 
@@ -53,6 +55,10 @@ instance Binary JasminError
 instance Hashable JasminError
 instance NFData JasminError where
     rnf = genericRnf
+
+instance Monoid JasminError where
+    mempty = GenericError noloc (text "empty") Nothing
+    mappend x y = y
 
 instance Located JasminError where
      type LocOf JasminError = Position
@@ -118,4 +124,9 @@ instance NFData TypeCheckerException where
 
 instance Monad m => PP m TypeCheckerException where
     pp = return . text . show
+
+warn :: (MonadIO m,PP m e) => Position -> e -> m ()
+warn p err = do
+    perr <- pp err
+    liftIO $ hPutStrLn stderr $ show perr
 

@@ -72,15 +72,33 @@ tokens :-
 <0>                 do          { lexerTokenInfo DO }
 <0>                 to          { lexerTokenInfo TO }
 <0>                 downto      { lexerTokenInfo DOWNTO }
+<0>                 unsigned    { lexerTokenInfo UNSIGNED }
+<0>                 signed      { lexerTokenInfo SIGNED }
 <0>                 if          { lexerTokenInfo IF }
 <0>                 else        { lexerTokenInfo ELSE }
 <0>                 fn          { lexerTokenInfo FN }
 <0>                 return      { lexerTokenInfo RETURN }
 
+<0>                 free        { lexerAnnTokenInfo FREE }
+<0>                 leakage     { lexerAnnTokenInfo LEAKAGE }
+<0>                 public      { lexerAnnTokenInfo PUBLIC }
+<0>                 function    { lexerAnnTokenInfo FUNCTION }
+<0>                 axiom       { lexerAnnTokenInfo AXIOM }
+<0>                 lemma       { lexerAnnTokenInfo LEMMA }
+<0>                 assume      { lexerAnnTokenInfo ASSUME }
+<0>                 assert      { lexerAnnTokenInfo ASSERT }
+<0>                 invariant      { lexerAnnTokenInfo INVARIANT }
+<0>                 decreases      { lexerAnnTokenInfo DECREASES }
+<0>                 requires      { lexerAnnTokenInfo REQUIRES }
+<0>                 ensures      { lexerAnnTokenInfo ENSURES }
+<0>                 forall      { lexerAnnTokenInfo FORALL }
+<0>                 exists      { lexerAnnTokenInfo EXISTS }
+
 -- Literals:
 
 <0>                 @declit            { lexerTokenInfoFunc (return . INT . convert_to_base 10) }
 <0>                 @hexlit            { lexerTokenInfoFunc (return . INT . convert_to_base 16) }
+<0>                 "_"                 { lexerTokenInfo UNDERSCORE }
 <0>                 @identifier        { lexerTokenInfoFunc (return . NID) }
 
 -- built-in functions:
@@ -94,7 +112,6 @@ tokens :-
 <0>                 ")"                  { lexerTokenInfo RPAREN }
 <0>                 "->"                { lexerTokenInfo RARROW }
 <0>                 ":"                  { lexerTokenInfo COLON }
-<0>                 "_"                  { lexerTokenInfo UNDERSCORE }
 <0>                 "="                  { lexerTokenInfo EQ_ }
 <0>                 "=="                  { lexerTokenInfo EQEQ }
 <0>                 "!="                 { lexerTokenInfo BANGEQ }
@@ -135,6 +152,13 @@ tokens :-
 
 -- Token Functions -------------------------------------------------------------
 
+lexerAnnTokenInfo :: Token -> AlexInput -> Int -> Alex TokenInfo
+lexerAnnTokenInfo t inp l = do
+    aus <- get
+    if lexAnn aus
+        then lexerTokenInfo t inp l
+        else lexerTokenInfoFunc (return . NID) inp l
+
 lexerTokenInfo :: Token -> AlexInput -> Int -> Alex TokenInfo
 lexerTokenInfo t (AlexPn a ln c, _, _, s) l = do
     fn <- alexFilename
@@ -173,14 +197,21 @@ unembedComment input len = do
     if (cd == 1)
         then do
             alexSetStartCode 0
-            skip input len
+            case isAnnotation (commentStr aus) of
+                Nothing -> skip input len
+                Just ann -> do
+                    aus <- get
+                    modify (\aus -> aus { commentStr = "" })
+                    lexerTokenInfo (ANNOTATION ann) input len
         else do
             skip input len
 
 lineComment :: AlexInput -> Int -> Alex TokenInfo
 lineComment input@(AlexPn a ln c, _, _, s) len = do
     let com = drop 2 $ take len s
-    skip input len
+    case isAnnotation com of
+        Nothing -> skip input len
+        Just ann -> lexerTokenInfo (ANNOTATION ann) input len
 
 -- Alex Functions --------------------------------------------------------------
 
@@ -188,13 +219,14 @@ data AlexUserState = AlexUserState
     { filename     :: !String
     , commentDepth :: Integer
     , commentStr   :: String
+    , lexAnn       :: Bool -- lex tokens in the annotation language or not
     }
 
 alexFilename :: Alex String
 alexFilename = liftM filename get
 
 alexInitUserState :: AlexUserState
-alexInitUserState = AlexUserState "" 0 ""
+alexInitUserState = AlexUserState "" 0 "" False
 
 instance MonadState AlexUserState Alex where
     get = alexGetUserState
@@ -227,15 +259,15 @@ alexSetPos p = do
     (_,x,y,z) <- alexGetInput
     alexSetInput (p,x,y,z)
 
-runLexerWith :: String -> String -> AlexPosn -> ([TokenInfo] -> Alex a) -> Either String a
-runLexerWith fn str pos parse = runAlex str $ do
+runLexerWith :: Bool -> String -> String -> AlexPosn -> ([TokenInfo] -> Alex a) -> Either String a
+runLexerWith isAnn fn str pos parse = runAlex str $ do
     alexSetPos pos
-    put (alexInitUserState { filename = fn})
+    put (alexInitUserState { filename = fn, lexAnn = isAnn })
     toks <- getTokens
     parse toks
 
-runLexer :: String -> String -> Either String [TokenInfo]
-runLexer fn str = runLexerWith fn str alexStartPos return
+runLexer :: Bool -> String -> String -> Either String [TokenInfo]
+runLexer isAnn fn str = runLexerWith isAnn fn str alexStartPos return
 
 injectResult :: Either String a -> Alex a
 injectResult (Left err) = throwError (GenericError (UnhelpfulPos "inject") (text err) Nothing)

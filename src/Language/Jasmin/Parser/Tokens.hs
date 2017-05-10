@@ -8,6 +8,7 @@ import Language.Location
 
 import Data.Generics
 import Data.Digits (digits, unDigits)
+import Data.List as List
 
 import Safe
 
@@ -59,6 +60,8 @@ data Token
     | RETURN
     | TO
     | DOWNTO
+    | SIGNED
+    | UNSIGNED
     
     | INT Integer
     | NID String
@@ -105,6 +108,22 @@ data Token
     | QUESTION
     | TokenEOF  
     | TokenError
+    
+    | FREE
+    | LEAKAGE
+    | PUBLIC
+    | FUNCTION
+    | AXIOM
+    | LEMMA
+    | ASSUME
+    | ASSERT
+    | INVARIANT
+    | DECREASES
+    | REQUIRES
+    | ENSURES
+    | FORALL
+    | EXISTS
+    | ANNOTATION [String]
   deriving (Eq,Ord,Read,Show,Data,Typeable)
 
 instance Monad m => PP m Token where
@@ -134,6 +153,8 @@ instance Monad m => PP m Token where
     pp RETURN   = return $ text "return"
     pp TO       = return $ text "to"
     pp DOWNTO   = return $ text "downto"
+    pp SIGNED     = return $ text "signed"
+    pp UNSIGNED     = return $ text "unsigned"
     
     pp (INT i) = return $ integer i
     pp (NID s) = return $ text s
@@ -181,6 +202,22 @@ instance Monad m => PP m Token where
     pp TokenEOF =               return $ text "<EOF>"
     pp TokenError =             return $ text "error <unknown>"
     
+    pp FREE              = return $ text "free"
+    pp LEAKAGE           = return $ text "leakage"
+    pp PUBLIC            = return $ text "public"
+    pp FUNCTION          = return $ text "function"
+    pp AXIOM             = return $ text "axiom"
+    pp LEMMA             = return $ text "lemma"
+    pp ASSUME             = return $ text "assume"
+    pp ASSERT             = return $ text "assert"
+    pp INVARIANT          = return $ text "invariant"
+    pp DECREASES          = return $ text "decreases"
+    pp REQUIRES          = return $ text "requires"
+    pp ENSURES          = return $ text "ensures"
+    pp FORALL          = return $ text "forall" 
+    pp EXISTS          = return $ text "exists" 
+    pp (ANNOTATION anns) =      return $ text "/*" <+> vcat (map (\ann -> text "@" <> text ann) anns) <+> text "*/"
+    
 convertBase :: Integral a => a -> a -> [a] -> [a]
 convertBase from to = digits to . unDigits from
 
@@ -195,3 +232,9 @@ convert_from_base base input = concatMap show ds10
 
 readInteger :: String -> Integer
 readInteger = readNote "read Integer"
+
+isAnnotation :: String -> Maybe [String]
+isAnnotation s = if ok then Just (map (takeWhile (/='@') . tail . dropWhile (/='@')) toks) else Nothing
+    where
+    toks = lines s
+    ok = not (List.null toks) && and (map (maybe False (=="@") . headMay . words) toks)

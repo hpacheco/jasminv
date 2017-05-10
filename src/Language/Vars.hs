@@ -12,6 +12,7 @@ import Data.Typeable hiding (typeOf)
 import Data.Proxy
 import Control.Monad
 import Data.Maybe
+import Language.Location
 
 import Utils
 
@@ -205,6 +206,12 @@ type VarsM id m = StateT
     ,Map id Bool-- bound vars (variable=false or name=True)
     )
     m
+
+instance (Vars id m info,Vars id m a) => Vars id m (Loc info a) where
+    traverseVars f (Loc l x) = do
+        l' <- f l
+        x' <- f x
+        return $ Loc l' x'
 
 instance (IsVar id,GenVar id m) => Vars id m () where
     traverseVars f = return

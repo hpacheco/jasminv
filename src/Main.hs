@@ -21,6 +21,7 @@ import Control.DeepSeq
 import Language.Jasmin.Parser.Parser
 import Language.Jasmin.Syntax
 import Language.Jasmin.Transformation.Dafny
+import Language.Jasmin.Transformation.Simplify
 import Language.Jasmin.TypeChecker
 import Language.Jasmin.Error
 import Language.Jasmin.IO
@@ -51,7 +52,8 @@ jasmin opts = do
     forM_ ins $ \fn -> printStatusM_ $ do
         ast <- parseJasmin opts fn
         ast' <- typecheckJasmin opts ast
-        verifyDafny opts ast'
+        ast'' <- simplifyJasmin opts ast'
+        verifyDafny opts ast''
 
 parseJasmin :: MonadIO m => Options -> FilePath -> StatusM m (Pprogram Position)
 parseJasmin opts fn = do
@@ -67,6 +69,14 @@ typecheckJasmin opts prog = do
         Left err -> throwError err
         Right tprog -> do
             when (debugTypechecker opts) $ liftIO $ hPutStrLn stderr $ show $ text "Typechecked:" $+$ text (pprid tprog)
+            return tprog
+
+simplifyJasmin :: (GenVar Piden m,MonadIO m) => Options -> Pprogram TyInfo -> StatusM m (Pprogram TyInfo)
+simplifyJasmin opts prog = do
+    e <- lift2 $ runSimplifyM $ simplifyPprogram prog
+    case e of
+        Left err -> throwError err
+        Right tprog -> do
             return tprog
 
 dafnyPreludeFile :: IO FilePath

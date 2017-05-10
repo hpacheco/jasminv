@@ -10,6 +10,7 @@ import Control.Monad
 import qualified Data.Generics as Generics
 import Data.Proxy
 import Data.Typeable hiding (typeOf)
+import Control.Monad.Except
 
 import Unsafe.Coerce
 
@@ -82,3 +83,6 @@ typeOfProxy p = TypeOf (Generics.typeOf p)
 
 eqTypeOf :: TypeOf a -> TypeOf b -> EqT a b
 eqTypeOf (TypeOf t1) (TypeOf t2) = if t1 == t2 then unsafeCoerce EqT else NeqT
+
+catchErrorMaybe :: MonadError e m => m a -> m (Maybe a)
+catchErrorMaybe m = catchError (liftM Just m) (const $ return Nothing)

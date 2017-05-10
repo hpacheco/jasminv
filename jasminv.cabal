@@ -35,6 +35,7 @@ Library
                         Language.Jasmin.TypeChecker.TyInfo
                         Language.Jasmin.TypeChecker
                         Language.Jasmin.Transformation.Dafny
+                        Language.Jasmin.Transformation.Simplify
                         Language.Location
                         Language.Position
                         Text.Parsec.Exts

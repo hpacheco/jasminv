@@ -72,11 +72,15 @@ traverseDecClassVars f (y,b) = do
 
 infoSto = fromJustNote "infoSto" . infoSto'
 infoTy = fromJustNote "infoTy" . infoTy'
+infoTyNote note = fromJustNote note . infoTy'
 infoDecClass :: TyInfo -> DecClass
 infoDecClass = maybe emptyDecClass id . infoDecClass'
 
 infoStoty :: TyInfo -> Pstotype TyInfo
-infoStoty i = (maybe Inline id $ infoSto' i,infoTy i)
+infoStoty i = (maybe Inline id $ infoSto' i,infoTyNote "infoStoTy" i)
+
+infoStotyNote :: String -> TyInfo -> Pstotype TyInfo
+infoStotyNote note i = (maybe Inline id $ infoSto' i,infoTyNote note i)
 
 noTyInfo l = TyInfo Nothing Nothing Nothing l
 tyInfo t = TyInfo Nothing (Just t) Nothing noloc
@@ -94,7 +98,10 @@ pstotypeTyInfo :: Pstotype TyInfo -> TyInfo
 pstotypeTyInfo (sto,t) = stotyInfo sto t
 
 locTy :: (Located a,LocOf a ~ TyInfo) => a -> Ptype TyInfo
-locTy = infoTy . loc
+locTy = infoTyNote "locTy" . loc
+
+locTyNote :: (Located a,LocOf a ~ TyInfo) => String -> a -> Ptype TyInfo
+locTyNote str = infoTyNote str . loc
 
 locTy' :: (Located a,LocOf a ~ TyInfo) => a -> Maybe (Ptype TyInfo)
 locTy' = infoTy' . loc
@@ -118,6 +125,16 @@ instance GenVar Piden IO where
         u <- newUnique
         let n' = n++"_"++show (hashUnique u)
         return $ Pident i n'
+
+locWordTy :: (Located a,LocOf a ~ TyInfo) => a -> Maybe Wsize
+locWordTy = join . fmap wordTy . locTy'
+
+locNumericTy :: (Located a,LocOf a ~ TyInfo) => a -> Bool
+locNumericTy = maybe False id . fmap isNumericType . locTy'
+
+locBoolTy :: (Located a,LocOf a ~ TyInfo) => a -> Bool
+locBoolTy = maybe False id . fmap isBoolType . locTy'
+
 
 
 

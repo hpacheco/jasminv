@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE TypeFamilies, RankNTypes, ViewPatterns #-}
 
 module Language.Jasmin.Parser.Parser where
 
@@ -14,12 +14,16 @@ import Language.Location
 import Language.Jasmin.Error
 
 import System.IO
+import Safe
+import Data.Maybe
 
 import Control.Monad.IO.Class
 import Control.Monad
 import Control.Monad.Except
 
-type ParserT m a = ParsecT [TokenInfo] () m a
+type ParserState = (Bool {- inside annotations -},Options)
+
+type ParserT m a = ParsecT [TokenInfo] ParserState m a
 
 ident :: Monad m => ParserT m (Pident Position)
 ident = liftM (\(Loc l x) -> Pident l x) (locp $ tokWith getNID) <?> "ident"
@@ -42,7 +46,7 @@ utype = toK T_U8 W8
     <|> toK T_U256 W256
     <?> "utype"
 
-ptype_ :: Monad m => ParserT m (Ptype Position)
+ptype_ :: MonadIO m => ParserT m (Ptype Position)
 ptype_ = toK T_BOOL TBool
      <|> toK T_INT TInt
      <|> apA2 utype (optionMaybe $ brackets pexpr) (\ut mbd -> case mbd of { Nothing -> TWord ut; Just d -> TArray ut d })
@@ -57,7 +61,7 @@ peop1 = toK BANG Not1 <?> "peop1"
 peop2 :: Monad m => ParserT m Peop2
 peop2 = toK PLUS Add2
     <|> toK MINUS Sub2
-    <|> toK STAR     Mul2  
+    <|> apA2 (optionMaybe utype) (tok STAR)     (\t _ -> Mul2 t)
     <|> toK AMPAMP   And2  
     <|> toK PIPEPIPE Or2   
     <|> toK AMP      BAnd2 
@@ -65,25 +69,30 @@ peop2 = toK PLUS Add2
     <|> toK HAT      BXor2 
     <|> toK LTLT     Shl2  
     <|> toK GTGT     Shr2  
-    <|> toK EQEQ     Eq2   
-    <|> toK BANGEQ   Neq2  
-    <|> toK LT_      Lt2   
-    <|> toK LE       Le2   
-    <|> toK GT_      Gt2   
-    <|> toK GE       Ge2   
+    <|> apA2 sign (tok EQEQ) (\s _ -> Eq2 s)
+    <|> apA2 sign (tok BANGEQ) (\s _ -> Neq2 s)
+    <|> apA2 sign (tok LT_) (\s _ -> Lt2 s)
+    <|> apA2 sign (tok LE)  (\s _ -> Le2 s)
+    <|> apA2 sign (tok GT_) (\s _ -> Gt2 s)
+    <|> apA2 sign (tok GE) (\s _ -> Ge2 s)
     <?> "peop2"
 
-pexpr :: Monad m => ParserT m (Pexpr Position)
+sign :: Monad m => ParserT m Sign
+sign = toK SIGNED Signed <|> toK UNSIGNED Unsigned <|> return Unsigned
+
+pexpr :: MonadIO m => ParserT m (Pexpr Position)
 pexpr = Parsec.foldl1 (\e1@(Pexpr l _) (o,e2) -> return $ Pexpr l $ PEOp2 o e1 e2) non2expr (peop2 >*< non2expr) <?> "pexpr"
 
-non2expr :: Monad m => ParserT m (Pexpr Position)
-non2expr = liftM (\(Loc l x) -> Pexpr l x) (locp non2expr_r) <?> "non2expr"
+non2expr :: MonadIO m => ParserT m (Pexpr Position)
+non2expr = (liftM (\(Loc l x) -> Pexpr l x) $ locp non2expr_r) <?> "non2expr"
 
-non2expr_r :: Monad m => ParserT m (Pexpr_r Position)
+non2expr_r :: MonadIO m => ParserT m (Pexpr_r Position)
 non2expr_r = apA2 ident (parens_tuple pexpr) (\fname args -> PECall fname args)
       <||> apA2 var (optionMaybe $ brackets pexpr) (\v mbi -> case mbi of { Nothing -> PEVar v; Just i -> PEGet v i })
       <|> toK TRUE (PEBool True)
       <|> toK FALSE (PEBool False)
+      <|> ann (apA2 (tok PUBLIC) (parens pexpr) (\x1 x2 -> LeakExpr x2))
+      <|> quantifiedExpr
       <|> tokWith getInt
       <|> apA2 peop1 non2expr (\o e -> PEOp1 o e)
 --      <|> apA3 non2expr peop2 non2expr (\e1 o e2 -> PEOp2 o e1 e2)
@@ -93,6 +102,12 @@ non2expr_r = apA2 ident (parens_tuple pexpr) (\fname args -> PECall fname args)
   where
   getInt t@(tSymb -> INT i) = Just $ PEInt i
   getInt t = Nothing
+
+quantifiedExpr :: MonadIO m => ParserT m (Pexpr_r Position)
+quantifiedExpr = ann $ apA4 quantifier (sepBy1 parg (tok COMMA)) (tok SEMICOLON) pexpr (\x1 x2 x3 x4 -> QuantifiedExpr x1 x2 x4)
+
+quantifier :: Monad m => ParserT m Quantifier
+quantifier = toK FORALL ForallQ <|> toK EXISTS ExistsQ
 
 -- (* -------------------------------------------------------------------- *)
 peqop :: Monad m => ParserT m Peqop
@@ -111,45 +126,48 @@ peqop = toK EQ_ RawEq
 --  * -------------------------------------------------------------------- *)
 -- (* FIXME: missing syntax for Lmem *)
 
-plvalue_r :: Monad m => ParserT m (Plvalue_r Position)
+plvalue_r :: MonadIO m => ParserT m (Plvalue_r Position)
 plvalue_r = toK UNDERSCORE PLIgnore
         <|> apA2 var (optionMaybe $ brackets pexpr) (\x mbi -> case mbi of { Nothing -> PLVar x; Just i -> PLArray x i })
         <|> apA (parens (plist1 plvalue COMMA)) (\es -> PLParens es)
         <||> apA6 (optionMaybe (parens ptype_)) (tok LBRACK) var (tok PLUS) pexpr (tok RBRACK) (\ct _ v _ e _ -> PLMem ct v e)
         <?> "plvalue_r"
 
-plvalue :: Monad m => ParserT m (Plvalue Position)
-plvalue = liftM (\(Loc l x) -> Plvalue l x) (locp plvalue_r) <?> "plvalue"
+plvalue :: MonadIO m => ParserT m (Plvalue Position)
+plvalue = (liftM (\(Loc l x) -> Plvalue l x) $ locp plvalue_r) <?> "plvalue"
 
 -- (* ** Control instructions
 --  * -------------------------------------------------------------------- *)
 
-pinstr_r :: Monad m => ParserT m (Pinstr_r Position)
+pinstr_r :: MonadIO m => ParserT m (Pinstr_r Position)
 pinstr_r = apA5 lval (peqop) pexpr (optionMaybe $ prefix (tok IF) pexpr) (tok SEMICOLON) (\x o e c _ -> PIAssign x o e c)
-       <|> apA4 (tok IF) pexpr pblock (optionMaybe $ tok ELSE *> pblock) (\_ c i1s i2s -> PIIf c i1s i2s)
-       <|> apA7 (tok FOR) var (tok EQ_) pexpr fordir pexpr pblock (\_ v _ ce1 dir ce2 is -> PIFor v dir ce1 ce2 is)
-       <|> apA4 (tok WHILE) (optionMaybe pblock) pexpr (optionMaybe pblock) (\_ is1 b is2 -> PIWhile is1 b is2 )
+       <|> apA4 (tok IF) pexpr pblock (optionMaybe $ tok ELSE *> pblock) (\_ c i1s i2s -> PIIf False c i1s i2s)
+       <|> apA8 (tok FOR) var (tok EQ_) pexpr fordir pexpr loopAnnotations pblock (\_ v _ ce1 dir ce2 anns is -> PIFor v dir ce1 ce2 anns is)
+       <|> apA5 (tok WHILE) (optionMaybe pblock) pexpr loopAnnotations (optionMaybe pblock) (\_ is1 b anns is2 -> PIWhile is1 b anns is2 )
        <?> "pinstr_r"
 
 fordir :: Monad m => ParserT m Fordir
 fordir = toK TO Up <|> toK DOWNTO Down
 
-lval :: Monad m => ParserT m [Plvalue Position]
+lval :: MonadIO m => ParserT m [Plvalue Position]
 lval = (rtuple1 plvalue)
 
-pinstr :: Monad m => ParserT m (Pinstr Position)
-pinstr = liftM (\(Loc l b) -> Pinstr l b) (locp pinstr_r) <?> "pinstr"
+pinstr :: MonadIO m => ParserT m (Pinstr Position)
+pinstr = (liftM (\(Loc l x) -> Pinstr l x) $ locp pinstr_r) <?> "pinstr"
        
-pblock_r :: Monad m => ParserT m (Pblock_r Position)
-pblock_r = braces (many pinstr) <?> "pblock_r"
+pblock_r :: MonadIO m => ParserT m (Pblock_r Position)
+pblock_r = braces pinstrs <?> "pblock_r"
 
-pblock :: Monad m => ParserT m (Pblock Position)
-pblock = liftM (\(Loc l b) -> Pblock l b) (locp pblock_r) <?> "pblock"
+pinstrs :: MonadIO m => ParserT m [Pinstr Position]
+pinstrs = liftM concat $ many' (apA statementAnnotations (map (\(StatementAnnotation l x) -> Pinstr l $ Anninstr x)) <||> liftM (:[]) pinstr)
+
+pblock :: MonadIO m => ParserT m (Pblock Position)
+pblock = (liftM (\(Loc l x) -> Pblock l x) $ locp pblock_r) <?> "pblock"
 
 -- (* ** Function definitions
 --  * -------------------------------------------------------------------- *)
 
-stor_type :: Monad m => ParserT m (Pstotype Position)
+stor_type :: MonadIO m => ParserT m (Pstotype Position)
 stor_type = storage >*< ptype_ <?> "stor_type"
 
 storage :: Monad m => ParserT m Pstorage
@@ -158,31 +176,58 @@ storage = toK REG Reg
       <|> toK INLINE Inline
       <?> "storage"
  
-pbodyarg :: Monad m => ParserT m (Pbodyarg Position)
+pbodyarg :: MonadIO m => ParserT m (Pbodyarg Position)
 pbodyarg = apA3 stor_type var (tok SEMICOLON) (\ty n _ -> Pbodyarg ty n) <?> "pvardecl"
 
-pfunbody :: Monad m => ParserT m (Pfunbody Position)
+pfunbody :: MonadIO m => ParserT m (Pfunbody Position)
 pfunbody = apA5
     (tok LBRACE)
     (many pbodyarg)
-    (many pinstr)
+    (pinstrs)
     (optionMaybe $ tok RETURN *> tuple var <* tok SEMICOLON)
     (tok RBRACE)
     (\_ vs is rt _ -> Pfunbody vs is rt)
     <?> "pfunbody"
 
-parg :: Monad m => ParserT m (Parg Position)
+parg :: MonadIO m => ParserT m (Parg Position)
 parg = apA2 (stor_type) (optionMaybe var) (\ty n -> Parg ty n)
 
-pfundef :: Monad m => ParserT m (Pfundef Position)
-pfundef = apA6
+pannaxiomdef :: MonadIO m => ParserT m (AnnAxiomDeclaration Position)
+pannaxiomdef = apA3
+    (locp leak)
+    (parens_tuple parg)
+    procedureAnnotations
+    (\(Loc p isLeak) args anns -> AnnAxiomDeclaration isLeak args anns p)
+
+pannlemmadef :: MonadIO m => ParserT m (AnnLemmaDeclaration Position)
+pannlemmadef = apA5
+    (locp leak)
+    ident
+    (parens_tuple parg)
+    procedureAnnotations
+    (optionMaybe pblock)
+    (\(Loc p isLeak) name args anns body -> AnnLemmaDeclaration isLeak name args anns body p)
+
+pannfundef :: MonadIO m => ParserT m (AnnFunDeclaration Position)
+pannfundef = apA6
+    (locp leak)
+    ptype_
+    ident
+    (parens_tuple parg)
+    procedureAnnotations
+    pexpr
+    (\(Loc p isLeak) rty name args anns body -> AnnFunDeclaration isLeak rty name args anns body p)
+
+pfundef :: MonadIO m => ParserT m (Pfundef Position)
+pfundef = apA7
     (optionMaybe pcall_conv)
     (locp $ tok FN)
     ident
     (parens_tuple parg)
     (optionMaybe $ prefix (tok RARROW) (tuple stor_type))
+    procedureAnnotations
     pfunbody
-    (\cc (Loc p _) name args rty body -> Pfundef cc name args rty body p)
+    (\cc (Loc p _) name args rty anns body -> Pfundef cc name args rty anns body p)
     <?> "pfundef"
 
 pcall_conv :: Monad m => ParserT m Pcall_conv
@@ -190,7 +235,7 @@ pcall_conv = toK EXPORT CCExport <|> toK INLINE CCInline
 
 -- (* -------------------------------------------------------------------- *)
 
-pparam :: Monad m => ParserT m (Pparam Position)
+pparam :: MonadIO m => ParserT m (Pparam Position)
 pparam = apA6
     (tok PARAM)
     ptype_
@@ -203,14 +248,26 @@ pparam = apA6
 
 -- (* -------------------------------------------------------------------- *)
 
-top :: Monad m => ParserT m (Pitem Position)
+top :: MonadIO m => ParserT m (Pitem Position)
 top = apA pfundef PFundef
   <|> apA pparam PParam 
   <?> "top"
+ 
+anntop :: MonadIO m => ParserT m (Pitem Position)
+anntop = apA pannaxiomdef PAxiomdef
+  <||> apA pannlemmadef PLemmadef
+  <||> apA pannfundef PAnnfunctiondef
+  <?> "ann top"
+
+anntops :: MonadIO m => ParserT m [Pitem Position]
+anntops = annotations1 $ many1' anntop
+
+alltops :: MonadIO m => ParserT m [Pitem Position]
+alltops = liftM concat $ many (anntops <||> apA top (:[]))
 
 -- (* -------------------------------------------------------------------- *)
-module_ :: Monad m => ParserT m (Pprogram Position)
-module_ = (liftM Pprogram) ((many top) <* tok TokenEOF) <?> "module_"
+module_ :: MonadIO m => ParserT m (Pprogram Position)
+module_ = (liftM Pprogram) (alltops <* tok TokenEOF) <?> "module_"
 
 -- (* -------------------------------------------------------------------- *)
 
@@ -274,15 +331,15 @@ toK t x = apA (tok t) (const x)
 parseJasminFile :: Options -> FilePath -> IO (Either ParserException (Pprogram Position))
 parseJasminFile opts file = do
     str <- readFile file
-    parseJasminWith opts file str (startPos file) module_
+    parseJasminWith opts file str False (startPos file) module_
 
-parseJasminWith :: (MonadIO m,PP m a) => Options -> String -> String -> Position -> ParserT m a -> m (Either ParserException a)
-parseJasminWith opts fn str pos parser = do
-    case runLexerWith fn str (positionToAlexPos pos) return of
+parseJasminWith :: (MonadIO m,PP m a) => Options -> String -> String -> Bool -> Position -> ParserT m a -> m (Either ParserException a)
+parseJasminWith opts fn str insideAnn pos parser = do
+    case runLexerWith insideAnn fn str (positionToAlexPos pos) return of
         Left err -> return $ Left $ LexicalException err
         Right toks -> do
             when (debugLexer opts) $ liftIO $ hPutStrLn stderr ("Lexed " ++ fn ++ ":") >> hPutStrLn stderr (show $ map tSymb toks)
-            e <- runParserT (setPosition (positionToSourcePos pos) >> parser) () fn toks
+            e <- runParserT (setPosition (positionToSourcePos pos) >> parser) (insideAnn,opts) fn toks
             case e of
                 Left err -> return $ Left $ ParserException $ show err
                 Right a -> do
@@ -296,4 +353,82 @@ locp m = do
     sp <- getPosition
     x <- m
     return $ Loc (sourcePosToPosition sp) x
-    
+
+free :: Monad m => ParserT m Bool
+free = liftM isJust $ optionMaybe (tok FREE)
+
+leak :: Monad m => ParserT m Bool
+leak = liftM isJust $ optionMaybe (tok LEAKAGE)
+
+leak' :: Monad m => (Bool -> ParserT m a) -> ParserT m a
+leak' f = maybeCont (tok LEAKAGE) (f . isJust)
+
+statementAnnotations :: (MonadIO m) => ParserT m [StatementAnnotation Position]
+statementAnnotations = annotations1 $ many1' (liftM (\(Loc l x) -> StatementAnnotation l x) $ locp statementAnnotation_r)
+
+statementAnnotation_r :: (MonadIO m) => ParserT m (StatementAnnotation_r Position)
+statementAnnotation_r = do
+    isLeak <- leak
+    (o1 isLeak <|> o2 isLeak <||> o3 isLeak)
+  where
+    o1 isLeak = apA3 (tok ASSUME) pexpr (tok SEMICOLON) (\x1 x2 x3 -> AssumeAnn isLeak x2)
+    o2 isLeak = apA3 (tok ASSERT) pexpr (tok SEMICOLON) (\x1 x2 x3 -> AssertAnn isLeak x2)
+    o3 isLeak = apA pinstr (\x1 -> EmbedAnn isLeak x1)
+
+procedureAnnotations :: (MonadIO m) => ParserT m [ProcedureAnnotation Position]
+procedureAnnotations = annotations0 $ many' (liftM (\(Loc l x) -> ProcedureAnnotation l x) $ locp procedureAnnotation_r)
+
+procedureAnnotation_r :: (MonadIO m) => ParserT m (ProcedureAnnotation_r Position)
+procedureAnnotation_r = apA3 (tok DECREASES) pexpr (tok SEMICOLON) (\x1 x2 x3 -> PDecreasesAnn x2)
+                   <|> try ((free >*< leak) >>= \(isFree,isLeak) -> requires isFree isLeak <|> ensures isFree isLeak)
+  where
+    requires isFree isLeak = apA3 (tok REQUIRES) pexpr (tok SEMICOLON) (\x1 x2 x3 -> RequiresAnn isFree isLeak x2)
+    ensures isFree isLeak = apA3 (tok ENSURES) pexpr (tok SEMICOLON) (\x1 x2 x3 -> EnsuresAnn isFree isLeak x2)
+
+loopAnnotations :: (MonadIO m) => ParserT m [LoopAnnotation Position]
+loopAnnotations = annotations0 $ many' (liftM (\(Loc l x) -> LoopAnnotation l x) $ locp loopAnnotation_r)
+
+loopAnnotation_r :: (MonadIO m) => ParserT m (LoopAnnotation_r Position)
+loopAnnotation_r = do
+    isFree <- free
+    (o1 isFree <|> o2 isFree)
+  where
+    o1 isFree = apA3 (tok DECREASES) pexpr (tok SEMICOLON) (\x1 x2 x3 -> LDecreasesAnn isFree x2)
+    o2 isFree = apA4 leak (tok INVARIANT) pexpr (tok SEMICOLON) (\x00 x1 x2 x3 -> LInvariantAnn isFree x00 x2)
+
+annotation :: (PP m a,Monoid a,MonadIO m) => ParserT m a -> ParserT m a
+annotation = annotations' (liftM (:[]))
+
+annotations0 :: (PP m a,Monoid a,MonadIO m) => ParserT m a -> ParserT m a
+annotations0 = annotations' (many')
+
+annotations1 :: (PP m a,Monoid a,MonadIO m) => ParserT m a -> ParserT m a
+annotations1 = annotations' (many1')
+
+parseLoc :: (Monad m,LocOf a ~ Position,Located a) => Maybe a -> ParserT m Position
+parseLoc (Just x) = return $ loc x
+parseLoc Nothing = liftM sourcePosToPosition getPosition
+
+
+annotations' :: (PP m a,Monoid a,MonadIO m) => (forall b . ParserT m b -> ParserT m [b]) -> ParserT m a -> ParserT m a
+annotations' parseAnns parse = do
+    (insideAnn,opts) <- getState
+    if insideAnn
+        then parse
+        else do
+            toks <- parseAnns (tokWith getAnn)
+            let anns = unlines $ concat $ map ((\(ANNOTATION x) -> x) . tSymb) toks
+            p <- parseLoc $ headMay toks
+            --liftIO $ putStrLn $ "parsing annotations starting at" ++ ppr p
+            e <- lift $ parseJasminWith opts (posFileName p) anns True p (parse <* tok TokenEOF)
+            case e of
+                Left err -> warn p err >> return mempty
+                Right x -> return x            
+  where
+    getAnn tok@(tSymb -> ANNOTATION a) = Just tok
+    getAnn tok = Nothing
+
+ann :: (Monad m) => ParserT m a -> ParserT m a
+ann m = do
+    (insideAnn,_) <- getState
+    if insideAnn then m else parserZero

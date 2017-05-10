@@ -6,7 +6,9 @@ import Data.Generics hiding (Generic)
 import Data.Hashable
 import Data.Binary
 import Data.Bifunctor
-    
+import Control.DeepSeq as DeepSeq
+import Control.DeepSeq.Generics hiding (force)
+
 import Text.PrettyPrint.Exts
 import Language.Position
 
@@ -44,9 +46,12 @@ instance (Located a,Located b,LocOf a ~ LocOf b) => Located (Either a b) where
 
 data Loc loc a = Loc loc a
   deriving (Read,Show,Data,Typeable,Functor,Generic)
-
+instance Bifunctor Loc where
+    bimap f g (Loc x y) = Loc (f x) (g y)
 instance (Binary loc,Binary a) => Binary (Loc loc a)
 instance (Hashable loc,Hashable a) => Hashable (Loc loc a)
+instance (NFData loc,NFData a) => NFData (Loc loc a) where
+    rnf = genericRnf
  
 instance Eq a => Eq (Loc loc a) where
     (Loc _ x) == (Loc _ y) = x == y
