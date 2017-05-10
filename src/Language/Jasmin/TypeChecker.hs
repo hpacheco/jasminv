@@ -383,7 +383,7 @@ tt_instr_r p (Anninstr ann) = withAnn (Just False) $ do
     return $ Anninstr ann'
 
 tt_instr_ann :: TcK m => StatementAnnotation Position -> TcM m (StatementAnnotation TyInfo)
-tt_instr_ann (StatementAnnotation l x) = do
+tt_instr_ann (StatementAnnotation l x) = withAnn (Just False) $ do
     x' <- tt_instr_ann_r l x
     cl <- getDecClass
     return $ StatementAnnotation (decInfoLoc cl l) x'
@@ -400,7 +400,7 @@ tt_instr_ann_r p (EmbedAnn isLeak e)  = checkAnn p (Just isLeak) $ do
     return $ EmbedAnn isLeak e'
     
 tt_loop_ann :: TcK m => LoopAnnotation Position -> TcM m (LoopAnnotation TyInfo)
-tt_loop_ann (LoopAnnotation l x) = do
+tt_loop_ann (LoopAnnotation l x) = withAnn (Just False) $ do
     x' <- tt_loop_ann_r l x
     cl <- getDecClass
     return $ LoopAnnotation (decInfoLoc cl l) x'
@@ -414,7 +414,7 @@ tt_loop_ann_r p (LInvariantAnn isFree isLeak e) = checkAnn p (Just isLeak) $ do
     return $ LInvariantAnn isFree isLeak e'
 
 tt_proc_ann :: TcK m => ProcedureAnnotation Position -> TcM m (ProcedureAnnotation TyInfo)
-tt_proc_ann (ProcedureAnnotation p x) = do
+tt_proc_ann (ProcedureAnnotation p x) = withAnn (Just False) $ do
     x' <- tt_proc_ann_r p x
     cl <- getDecClass
     return $ ProcedureAnnotation (decInfoLoc cl p) x'
@@ -667,8 +667,7 @@ checkAnn p ann m = do
     if (ann <= old)
         then m
         else do
-            pa <- pp ann
-            genError p $ text "required annotation mode" <+> pa
+            genError p $ text "required annotation mode" <+> (text $ show ann) <+> text "inside" <+> (text $ show old)
 
 isCarryOp Add2 = True
 isCarryOp Sub2 = True

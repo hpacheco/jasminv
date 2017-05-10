@@ -143,7 +143,8 @@ pinstr_r :: MonadIO m => ParserT m (Pinstr_r Position)
 pinstr_r = apA5 lval (peqop) pexpr (optionMaybe $ prefix (tok IF) pexpr) (tok SEMICOLON) (\x o e c _ -> PIAssign x o e c)
        <|> apA4 (tok IF) pexpr pblock (optionMaybe $ tok ELSE *> pblock) (\_ c i1s i2s -> PIIf False c i1s i2s)
        <|> apA8 (tok FOR) var (tok EQ_) pexpr fordir pexpr loopAnnotations pblock (\_ v _ ce1 dir ce2 anns is -> PIFor v dir ce1 ce2 anns is)
-       <|> apA5 (tok WHILE) (optionMaybe pblock) pexpr loopAnnotations (optionMaybe pblock) (\_ is1 b anns is2 -> PIWhile is1 b anns is2 )
+       <|> apA4 (tok WHILE) loopAnnotations pblock pexpr (\_ anns is1 b -> PIWhile (Just is1) b anns Nothing )
+       <||> apA4 (tok WHILE) pexpr loopAnnotations pblock (\_ b anns is2 -> PIWhile Nothing b anns (Just is2) )
        <?> "pinstr_r"
 
 fordir :: Monad m => ParserT m Fordir

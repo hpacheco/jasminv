@@ -166,29 +166,6 @@ pinstrToDafny (Pinstr l i) = pinstr_rToDafny l i
     
 pinstr_rToDafny :: DafnyK m => TyInfo -> Pinstr_r TyInfo -> DafnyM m (Doc,AnnsDoc)
 pinstr_rToDafny l (PIIf isPrivate c s1 s2) = pif_rToDafny isPrivate l c s1 s2
---pinstr_rToDafny l (PIFor v dir from to (Pblock lb is)) = do
---    let p = infoLoc l
---    let vty = locTyNote "pinstrToDafny" v
---    (pass,ann2) <- pinstr_rToDafny l $ PIAssign Nothing [varPlvalue v] RawEq from Nothing 
---    let lb' = lb { infoDecClass' = let ((rs,isg1),(ws,isg2)) = infoDecClass lb in Just ((Map.insert (funit v) (vty,False) rs,isg1),(Map.insert (funit v) (vty,True) ws,isg2)) }
---    let (op2,cmp2) = case dir of { Up -> (Add2,Lt2); Down -> (Sub2,Gt2) }
---    let clinc = ((Map.singleton (funit v) (vty,False),False),(Map.singleton (funit v) (vty,False),False))
---    let inc = Pinstr (decInfoLoc clinc p) $ PIAssign Nothing [varPlvalue v] RawEq (Pexpr (loc v) $ PEOp2 op2 (varPexpr v) (Pexpr (loc v) $ PEInt 1)) Nothing
---    let b' = Pblock lb' $ is ++ [inc]
---    cl <- removeDecClassConsts $ infoDecClass $ loc b'
---    leakMode <- getLeakMode
---    pfrom <- pp from
---    pto <- pp to
---    fromtovs <- lift2 $ usedVars (from,to)
---    pv <- pidentToDafny v
---    anninv1 <- annExpr Nothing True leakMode InvariantK (Set.singleton (funit v)) (text (publicAnn StmtK) <> parens pv)
---    anninv2 <- annExpr Nothing False leakMode InvariantK (Set.insert (funit v) fromtovs) (parens (pfrom <+> text "<=" <+> pv) <+> text "&&" <+> parens (pv <+> text "<=" <+> pto))    
---    annframes <- propagateDafnyAssumptions p InvariantK cl
---    (pe,anne) <- pexpr_rToDafny InvariantK IsCt (tyInfoLoc TBool p) $ PEOp2 cmp2 (varPexpr v) to
---    (ps,annb) <- pblockToDafny b'
---    (pw,anns) <- addAnnsC StmtKC (anne++annb) $ vbraces ps
---    let while = text "while" <+> pe $+$ annLinesProcC (anninv1++anninv2 ++ annframes) $+$ pw
---    return (pass $+$ while,ann2++anns)
 pinstr_rToDafny l (PIWhile Nothing e ann (Just s)) = do
     let p = infoLoc l
     let cl = infoDecClass $ loc s
@@ -199,9 +176,6 @@ pinstr_rToDafny l (PIWhile Nothing e ann (Just s)) = do
     (ps,ann2) <- pblockToDafny s
     (pw,anns) <- addAnnsC StmtKC (anne++ann2) $ vbraces ps
     return (text "while" <+> pe $+$ invs $+$ annLinesProcC annframes $+$ pw,annns'++anns)
---pinstr_rToDafny l (PIWhile (Just s) e Nothing) = do
---    pblockToDafny s
---    pinstr_rToDafny l (PIWhile Nothing e (Just s))
 pinstr_rToDafny l (PIAssign ls RawEq re Nothing) = do
     (pre,pres) <- pexprToDafny StmtK IsPrivate re
     lvs <- lift2 $ usedVars ls    
@@ -220,6 +194,9 @@ pinstr_rToDafny l (Ccall ls n args) = do
     let (anns1,pres'') = annLinesC StmtKC (pres++pres')
     let (anns2,post') = annLinesC StmtKC post
     return (pres'' $+$ pass $+$ post',anns1++anns2)
+pinstr_rToDafny l i = do
+    pi <- pp i
+    genError (infoLoc l) $ text "pinstr_rToDafny: unsupported instruction " <+> pi
 
 carry_opToDafny :: DafnyK m => Position -> [Plvalue TyInfo] -> Op -> [Pexpr TyInfo] -> DafnyM m (Doc,AnnsDoc)
 carry_opToDafny p ls op es@(e1:_) = do

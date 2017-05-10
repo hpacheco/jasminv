@@ -36,12 +36,16 @@ fn mladder(stack u64[4] xr, stack u64[4] sp) -> (stack u64[4], stack u64[4]) {
   z3[0] = 1; z3[1] = 0; z3[2] = 0; z3[3] = 0;
 
   i = 3;
-  while {
+  while
+  //@ invariant i <= 64;
+  {
     tmp1 = sp[i];
     i_s = i;
     s = tmp1;
     j = 63;
-    while {
+    while
+    //@ invariant j <= 64;
+    {
       tmp2 = s;
       bit = tmp2 >> j;
       j_s = j;
