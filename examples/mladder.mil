@@ -43,23 +43,23 @@ fn mladder(stack u64[4] xr, stack u64[4] sp) -> (stack u64[4], stack u64[4]) {
     tmp1 = sp[i];
     i_s = i;
     s = tmp1;
-    //j = 63;
-    //while
-    ////@ decreases (int64) j;
-    ////@ invariant ((0 <= j) && (j <= 63) && (!cf)) || cf;
-    //{
-    //  tmp2 = s;
-    //  bit = tmp2 >> j;
-    //  j_s = j;
-    //  bit = bit & 1;
-    //  swap = prevbit;
-    //  swap ^= bit;
-    //  prevbit = bit;
-    //  x2,z2,x3,z3 = cswap(x2,z2,x3,z3,swap);
-    //  x2,z2,x3,z3 = ladderstep(x1,x2,z2,x3,z3);
-    //  j = j_s;
-    //  cf,j -= 1;  // returns cf=1 for input j=0
-    //} (!cf)
+    j = 63;
+    while
+    //@ decreases (int64) j;
+    //@ invariant ((0 <= j) && (j <= 63) && (!cf)) || cf;
+    {
+      tmp2 = s;
+      bit = tmp2 >> j;
+      j_s = j;
+      bit = bit & 1;
+      swap = prevbit;
+      swap ^= bit;
+      prevbit = bit;
+      x2,z2,x3,z3 = cswap(x2,z2,x3,z3,swap);
+      x2,z2,x3,z3 = ladderstep(x1,x2,z2,x3,z3);
+      j = j_s;
+      cf,j -= 1;  // returns cf=1 for input j=0
+    } (!cf)
     i = i_s;
     cf,i -= 1; // returns cf=1 for input i=0
   } (!cf)
