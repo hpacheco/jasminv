@@ -50,9 +50,9 @@ peop2_of_eqop BXOrEq = Just BXor2
 peop2_of_eqop BOrEq  = Just BOr2
 
 max_ty :: TcK m => JasminError -> Ptype info -> Ptype info -> TcM m (Ptype info)
-max_ty err TInt TInt = return TInt
-max_ty err TInt t2@(TWord _) = return t2
-max_ty err t1@(TWord _) TInt = return t1
+max_ty err (TInt Nothing) (TInt Nothing) = return (TInt Nothing)
+max_ty err (TInt Nothing) t2@(TWord _) = return t2
+max_ty err t1@(TWord _) (TInt Nothing) = return t1
 max_ty err t1@(TWord w1) (TWord w2) | w1 == w2 = return t1
 max_ty err _ _ = throwError err
 
@@ -60,8 +60,8 @@ cast_pexpr :: TcK m => Pexpr TyInfo -> Ptype TyInfo -> TcM m (Pexpr TyInfo)
 cast_pexpr e ty = do
     let ety = infoTyNote "cast_pexpr" $ loc e
     let eloc = infoLoc $ loc e
-    let cast' TInt TInt = return e
-        cast' TInt (TWord w) = return $ Pexpr (tyInfo $ TWord w) (Pcast (TWord w) e)
+    let cast' (TInt Nothing) (TInt Nothing) = return e
+        cast' (TInt Nothing) (TWord w) = return $ Pexpr (tyInfo $ TWord w) (Pcast (TWord w) e)
         cast' (TWord w1) (TWord w2) | w1 == w2 = return e
         cast' ety ty = tyError eloc $ InvalidCast ety ty
     cast' ety ty
@@ -82,7 +82,7 @@ tt_op2 l op e1 e2 = do
                     let e2'' = Pexpr (tyInfoLoc tw l) $ Pcast (TWord w) e2'
                     return (PEOp2 op e1'' e2'',tw)
                 Nothing -> return (PEOp2 op e1' e2',ty)
-        (isBoolPeop2 -> True,TBool,TBool) -> return (PEOp2 And2 e1 e2,TBool)
+        (isBoolPeop2 -> True,TBool,TBool) -> return (PEOp2 op e1 e2,TBool)
         (isCmpPeop2 -> Just _,ty1,ty2) -> do
             ty <- max_ty (TypeCheckerError l $ InvOpInExpr op) ty1 ty2
             e1' <- cast_pexpr e1 ty1
@@ -113,7 +113,7 @@ tt_expr_r l (PEParens e) = do
 tt_expr_r l (PEBool b) = do
     return (PEBool b,TBool)
 tt_expr_r l (PEInt i) = do
-    return (PEInt i,TInt)
+    return (PEInt i,TInt Nothing)
 tt_expr_r l (PEVar v) = do
     v' <- tt_var v False
     return (PEVar v',infoTyNote "tt_expr" $ loc v')
@@ -147,13 +147,17 @@ tt_expr_r l (LeakExpr e) = checkAnn l (Just True) $ do
     e' <- tt_expr e
     return (LeakExpr e',TBool)
 tt_expr_r l qe@(QuantifiedExpr q vs e) = checkAnn l (Just False) $ tt_local $ do
-    vs' <- (tt_vardecls') vs
+    vs' <- mapM tt_annarg vs
     e' <- tt_bool e
     return (QuantifiedExpr q vs' e',TBool)
+tt_expr_r l (Pcast t e) = checkAnn l (Just False) $ do -- FIXME: we do not verify casts
+    t' <- tt_type t
+    e' <- tt_expr e
+    return (Pcast t' e',t')
 
 tt_type :: TcK m => Ptype Position -> TcM m (Ptype TyInfo)
 tt_type TBool = return TBool
-tt_type TInt = return TInt
+tt_type (TInt w) = return $ TInt w
 tt_type (TWord ws) = do
     ws' <- tt_ws ws
     return $ TWord ws'
@@ -165,11 +169,13 @@ tt_type (TArray ws e) = do
 tt_ws :: TcK m => Wsize -> TcM m Wsize
 tt_ws w = return w
 
-tt_vardecls' :: TcK m => [Parg Position] -> TcM m [Parg TyInfo]
-tt_vardecls' = mapM tt_vardecl'
-
-tt_vardecls :: TcK m => [Pbodyarg Position] -> TcM m [Pbodyarg TyInfo]
-tt_vardecls = mapM tt_vardecl
+tt_annarg :: TcK m => Annarg Position -> TcM m (Annarg TyInfo)
+tt_annarg (Annarg t v@(Pident l n)) = do
+    t' <- tt_type t
+    let info = tyInfoLoc t' l
+    let v' = Pident info n
+    addVar v'
+    return (Annarg t' v')
     
 tt_vardecl :: TcK m => Pbodyarg Position -> TcM m (Pbodyarg TyInfo)
 tt_vardecl (Pbodyarg t v) = do
@@ -250,16 +256,16 @@ tt_lvalue_r p (PLMem st x pe) = do
     let st'' = Just $ TWord $ maybe w id st'
     return (PLMem st'' x' pe',st'')
 
-tt_expr_of_lvalues :: TcK m => Position -> [Plvalue info] -> TcM m (Pexpr info)
+tt_expr_of_lvalues :: MonadError JasminError m => Position -> [Plvalue info] -> m (Pexpr info)
 tt_expr_of_lvalues p [] = tyError p EqOpWithNoLValue
 tt_expr_of_lvalues p lvs = tt_expr_of_lvalue p (last lvs) 
 
-tt_expr_of_lvalue :: TcK m => Position -> Plvalue info -> TcM m (Pexpr info)
+tt_expr_of_lvalue :: MonadError JasminError m => Position -> Plvalue info -> m (Pexpr info)
 tt_expr_of_lvalue p (Plvalue i lv) = do
     e <- tt_expr_of_lvalue' p lv
     return $ Pexpr i e
   where
-    tt_expr_of_lvalue' :: TcK m => Position -> Plvalue_r info -> TcM m (Pexpr_r info)
+    tt_expr_of_lvalue' :: MonadError JasminError m => Position -> Plvalue_r info -> m (Pexpr_r info)
     tt_expr_of_lvalue' p (PLVar x) = return $ PEVar x
     tt_expr_of_lvalue' p (PLArray x i) = return $ PEGet x i
     tt_expr_of_lvalue' p (PLParens es) = do
@@ -320,9 +326,9 @@ tt_indexvar x isWrite = do
     return x'
 
 check_index :: TcK m => Position -> Ptype TyInfo -> TcM m ()
-check_index p TInt = return ()
+check_index p (TInt Nothing) = return ()
 check_index p (TWord _) = return ()
-check_index p t = tyError p $ TypeMismatch t TInt
+check_index p t = tyError p $ TypeMismatch t (TInt Nothing)
 
 --assign_index :: TcK m => Pexpr TyInfo -> TcM m (Pexpr TyInfo)
 --assign_index x' = do
@@ -398,6 +404,9 @@ tt_instr_ann_r p (AssertAnn isLeak e) = checkAnn p (Just isLeak) $ do
 tt_instr_ann_r p (EmbedAnn isLeak e)  = checkAnn p (Just isLeak) $ do
     e' <- tt_instr e
     return $ EmbedAnn isLeak e'
+tt_instr_ann_r p (VarDefAnn ann) = do
+    ann' <- tt_annarg ann
+    return $ VarDefAnn ann'
     
 tt_loop_ann :: TcK m => LoopAnnotation Position -> TcM m (LoopAnnotation TyInfo)
 tt_loop_ann (LoopAnnotation l x) = withAnn (Just False) $ do
@@ -547,7 +556,7 @@ tt_block (Pblock l is) = tt_local $ do
 
 tt_funbody :: TcK m => Pfunbody Position -> TcM m (Pfunbody TyInfo)
 tt_funbody (Pfunbody vars instrs ret) = tt_local $ do
-    vars' <- tt_vardecls vars
+    vars' <- mapM tt_vardecl vars
     ret' <- mapM (mapM (flip tt_var False)) ret
     instrs' <- mapM tt_instr instrs
     return $ Pfunbody vars' instrs' ret'
@@ -562,7 +571,7 @@ tt_item (PAnnfunctiondef pf) = liftM PAnnfunctiondef $ tt_fundef_ann pf
 tt_fundef :: TcK m => Pfundef Position -> TcM m (Pfundef TyInfo)
 tt_fundef pf@(Pfundef cc name args rty anns body l) = tt_global $ do
     let name' = fmap noTyInfo name
-    args' <- tt_vardecls' args
+    args' <- mapM tt_vardecl' args
     rty' <- mapM (mapM (mapSndM tt_type)) rty
     anns' <- mapM tt_proc_ann anns
     (body',cl) <- withDecClass $ tt_funbody body
@@ -573,14 +582,14 @@ tt_fundef pf@(Pfundef cc name args rty anns body l) = tt_global $ do
 
 tt_axiomdef_ann :: TcK m => AnnAxiomDeclaration Position -> TcM m (AnnAxiomDeclaration TyInfo)
 tt_axiomdef_ann  (AnnAxiomDeclaration isLeak args anns p) = tt_global $ withAnn (Just isLeak) $ do
-    args' <- tt_vardecls' args
+    args' <- mapM tt_annarg args
     anns' <- mapM tt_proc_ann anns
     return (AnnAxiomDeclaration isLeak args' anns' (decInfoLoc emptyDecClass p))
 
 tt_lemmadef_ann :: TcK m => AnnLemmaDeclaration Position -> TcM m (AnnLemmaDeclaration TyInfo)
 tt_lemmadef_ann  (AnnLemmaDeclaration isLeak name args anns body p) = tt_global $ withAnn (Just isLeak) $ do
     let name' = fmap noTyInfo name
-    args' <- tt_vardecls' args
+    args' <- mapM tt_annarg args
     anns' <- mapM tt_proc_ann anns
     (body',cl) <- withDecClass $ mapM tt_block body
     return (AnnLemmaDeclaration isLeak name' args' anns' body' (decInfoLoc cl p))
@@ -589,7 +598,7 @@ tt_fundef_ann :: TcK m => AnnFunDeclaration Position -> TcM m (AnnFunDeclaration
 tt_fundef_ann  (AnnFunDeclaration isLeak ret name args anns body p) = tt_global $ withAnn (Just isLeak) $ do
     ret' <- tt_type ret
     let name' = fmap noTyInfo name
-    args' <- tt_vardecls' args
+    args' <- mapM tt_annarg args
     anns' <- mapM tt_proc_ann anns
     (body',cl) <- withDecClass $ tt_expr body
     check_sig p [ret'] [locTy body']
@@ -743,8 +752,8 @@ localVars m = do
 getCall :: TcK m => Position -> Piden -> TcM m (Pident TyInfo,[Ptype TyInfo],[Ptype TyInfo])
 getCall p n =
     do      (getFun p n >>= \f -> return (pdf_name f,maybe [] (map snd) $ pdf_rty f,map (snd . pa_ty) $ pdf_args f))
-    `mplus` (getAnnLemma p n >>= \f -> return (lemma_name f,[],map (snd . pa_ty) $ lemma_args f))
-    `mplus` (getAnnFun p n >>= \f -> return (af_name f,[af_ty f],map (snd . pa_ty) $ af_args f))
+    `mplus` (getAnnLemma p n >>= \f -> return (lemma_name f,[],map (aa_ty) $ lemma_args f))
+    `mplus` (getAnnFun p n >>= \f -> return (af_name f,[af_ty f],map (aa_ty) $ af_args f))
 
 getFun :: TcK m => Position -> Piden -> TcM m (Pfundef TyInfo)
 getFun l n = do
@@ -840,7 +849,7 @@ expr_ty_assign p e t = do
 
 check_ty_assign :: TcK m => Position -> Pexpr TyInfo -> Ptype TyInfo -> TcM m (Pexpr TyInfo)
 check_ty_assign l e1@(locTyNote "check_ty_assign" -> t1) t2 | funit t1 == funit t2 = return e1
-check_ty_assign l e1@(locTyNote "check_ty_assign" -> TInt) t2@(TWord ws) = return $ Pexpr (tyInfoLoc t2 l) $ Pcast (TWord ws) e1
+check_ty_assign l e1@(locTyNote "check_ty_assign" -> TInt Nothing) t2@(TWord ws) = return $ Pexpr (tyInfoLoc t2 l) $ Pcast (TWord ws) e1
 check_ty_assign l e1@(locTyNote "check_ty_assign" -> t1) t2 = tyError l $ TypeMismatch t1 t2
 
 check_sig :: TcK m => Position -> [Ptype TyInfo] -> [Ptype TyInfo] -> TcM m ()

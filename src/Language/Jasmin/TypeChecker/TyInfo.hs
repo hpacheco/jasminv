@@ -117,7 +117,7 @@ falsePexpr,truePexpr :: Pexpr TyInfo
 falsePexpr = Pexpr (tyInfoLoc TBool noloc) $ PEBool False
 truePexpr = Pexpr (tyInfoLoc TBool noloc) $ PEBool True
 intPexpr :: Integer -> Pexpr TyInfo
-intPexpr i = Pexpr (tyInfoLoc TInt noloc) $ PEInt i
+intPexpr i = Pexpr (tyInfoLoc (TInt Nothing) noloc) $ PEInt i
 
 instance GenVar Piden IO where
     mkVar str = return $ Pident () str

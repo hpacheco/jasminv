@@ -52,7 +52,7 @@ simplifyPitem (PAnnfunctiondef f) = liftM (Left . PAnnfunctiondef) $ simplifyPAn
 
 simplifyPAnnAxiomDef :: SimplifyK m => AnnAxiomDeclaration TyInfo -> SimplifyM m (AnnAxiomDeclaration TyInfo)
 simplifyPAnnAxiomDef (AnnAxiomDeclaration isLeak args anns i) = do
-    args' <- mapM simplifyParg args
+    args' <- mapM simplifyAnnarg args
     anns' <- mapM simplifyProcAnn anns
     i' <- simplifyTyInfo i
     return $ AnnAxiomDeclaration isLeak args' anns' i'
@@ -60,7 +60,7 @@ simplifyPAnnAxiomDef (AnnAxiomDeclaration isLeak args anns i) = do
 simplifyPAnnLemmaDef :: SimplifyK m => AnnLemmaDeclaration TyInfo -> SimplifyM m (AnnLemmaDeclaration TyInfo)
 simplifyPAnnLemmaDef (AnnLemmaDeclaration isLeak n args anns body i) = do
     n' <- simplifyPident n
-    args' <- mapM simplifyParg args
+    args' <- mapM simplifyAnnarg args
     anns' <- mapM simplifyProcAnn anns
     body' <- mapM simplifyPblock body
     i' <- simplifyTyInfo i
@@ -70,7 +70,7 @@ simplifyPAnnFunDef :: SimplifyK m => AnnFunDeclaration TyInfo -> SimplifyM m (An
 simplifyPAnnFunDef (AnnFunDeclaration isLeak ret n args anns body i) = do
     ret' <- simplifyPtype ret
     n' <- simplifyPident n
-    args' <- mapM simplifyParg args
+    args' <- mapM simplifyAnnarg args
     anns' <- mapM simplifyProcAnn anns
     body' <- simplifyPexpr body
     i' <- simplifyTyInfo i
@@ -95,6 +95,12 @@ simplifyParg (Parg ty n) = do
     ty' <- simplifyPstotype ty
     n' <- mapM simplifyPident n
     return $ Parg ty' n'
+
+simplifyAnnarg :: SimplifyK m => Annarg TyInfo -> SimplifyM m (Annarg TyInfo)
+simplifyAnnarg (Annarg ty n) = do
+    ty' <- simplifyPtype ty
+    n' <- simplifyPident n
+    return $ Annarg ty' n'
 
 simplifyPbodyarg :: SimplifyK m => Pbodyarg TyInfo -> SimplifyM m (Pbodyarg TyInfo)
 simplifyPbodyarg (Pbodyarg ty n) = do
@@ -152,6 +158,9 @@ simplifyStatementAnn_r (AssertAnn isLeak e) = do
 simplifyStatementAnn_r (EmbedAnn isLeak e) = do
     e' <- simplifyPinstr e
     return $ map (EmbedAnn isLeak) e'
+simplifyStatementAnn_r (VarDefAnn ann) = do
+    ann' <- simplifyAnnarg ann
+    return [VarDefAnn ann']
 
 simplifyLoopAnn :: SimplifyK m => LoopAnnotation TyInfo -> SimplifyM m (LoopAnnotation TyInfo)
 simplifyLoopAnn (LoopAnnotation l x) = do
@@ -189,8 +198,8 @@ simplifyPinstr_r i (PIFor n dir from to anns (Pblock bi b)) = do
     let anninv2 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (Le2 Unsigned) (varPexpr n) to
     concatMapM simplifyPinstr [binit,Pinstr i' $ PIWhile Nothing c (anns++[anninv1,anninv2]) $ Just b']
 simplifyPinstr_r i (PIWhile (Just b@(Pblock _ is)) c anns Nothing) = do
-    let ianns = map ((\(StatementAnnotation l x) -> Pinstr l $ Anninstr x) . loopAnn2StmtAnn) anns
-    concatMapM simplifyPinstr (ianns ++ is ++ [Pinstr i $ PIWhile Nothing c anns (Just b)])
+    (ianns1,ianns2) <- Utils.mapAndUnzipM loopAnn2StmtAnn anns
+    concatMapM simplifyPinstr (concat ianns1 ++ is ++ concat ianns2 ++ [Pinstr i $ PIWhile Nothing c anns (Just b)])
 simplifyPinstr_r i (PIWhile Nothing c ann (Just b)) = do
     c' <- simplifyPexpr c
     b' <- simplifyPblock b
@@ -286,7 +295,7 @@ simplifyPstotype (sto,ty) = do
 
 simplifyPtype :: SimplifyK m => Ptype TyInfo -> SimplifyM m (Ptype TyInfo)
 simplifyPtype TBool = return TBool
-simplifyPtype TInt = return TInt
+simplifyPtype (TInt w) = return $ TInt w
 simplifyPtype (TWord w) = return $ TWord w
 simplifyPtype (TArray w e) = do
     e' <- simplifyPexpr e
@@ -359,10 +368,29 @@ substsProxyFromConsts f = SubstsProxy $ \pb b v -> case eqTypeOf (typeOfProxy pb
 substConsts :: (Vars Piden m Piden,Vars Piden m a) => SubstConsts -> a -> m a
 substConsts ssvars x = subst dontStop (substsFromConsts ssvars) False Map.empty x
 
-loopAnn2StmtAnn :: LoopAnnotation info -> StatementAnnotation info
-loopAnn2StmtAnn (LoopAnnotation l x) = StatementAnnotation l $ loopAnn_r2StmtAnn_r l x
-    where
-        loopAnn_r2StmtAnn_r p (LInvariantAnn True isLeak e) = AssumeAnn isLeak e
-        loopAnn_r2StmtAnn_r p (LInvariantAnn False isLeak e) = AssertAnn isLeak e
+
+
+loopAnn2StmtAnn :: SimplifyK m => LoopAnnotation TyInfo -> SimplifyM m ([Pinstr TyInfo],[Pinstr TyInfo])
+loopAnn2StmtAnn (LoopAnnotation l x) = do
+    (xs,ys) <- loopAnn_r2StmtAnn_r l x
+    let f (StatementAnnotation l x) = Pinstr l $ Anninstr x
+    return (map f xs,map f ys)
+
+loopAnn_r2StmtAnn_r :: SimplifyK m => TyInfo -> LoopAnnotation_r TyInfo -> SimplifyM m ([StatementAnnotation TyInfo],[StatementAnnotation TyInfo])
+loopAnn_r2StmtAnn_r p (LInvariantAnn True isLeak e) = return ([StatementAnnotation p $ AssumeAnn isLeak e],[])
+loopAnn_r2StmtAnn_r p (LInvariantAnn False isLeak e) = return ([StatementAnnotation p $ AssertAnn isLeak e],[])
+loopAnn_r2StmtAnn_r l (LDecreasesAnn isFree e) = do
+    let p = infoLoc l
+    let ie = loc e
+    c@(Pident () n) <- lift2 $ mkNewVar "cond"
+    let c' = Pident ie n
+    let def = StatementAnnotation l $ VarDefAnn $ Annarg (locTy e) c'
+    let ass = StatementAnnotation l $ EmbedAnn False $ Pinstr l $ PIAssign [varPlvalue c'] RawEq e Nothing
+    let cons = if isFree then AssumeAnn else AssertAnn
+    let assert = StatementAnnotation l $ cons False $ Pexpr (tyInfoLoc TBool p) $ PEOp2 (Le2 Unsigned) e (varPexpr c')
+    return ([def,ass],[assert])
+
+
+
 
 

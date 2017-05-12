@@ -51,6 +51,9 @@ class Monad m => GenVar id m where
     mkVar :: String -> m id
     newVar :: id -> m id
 
+mkNewVar :: GenVar id m => String -> m id
+mkNewVar s = mkVar s >>= newVar
+
 class (IsVar id,IsVar a,GenVar id m) => Vars id m a where
     
     traverseVars :: (forall b . Vars id m b => b -> VarsM id m b) -> a -> VarsM id m a

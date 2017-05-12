@@ -150,7 +150,7 @@ data Pexpr_r info
   | PEOp2    Peop2 (Pexpr info) (Pexpr info)
   -- annotations
   | LeakExpr (Pexpr info)
-  | QuantifiedExpr Quantifier [Parg info] (Pexpr info)
+  | QuantifiedExpr Quantifier [Annarg info] (Pexpr info)
     deriving (Eq,Ord,Show,Data,Typeable,Generic,Functor)
 instance Binary info => Binary (Pexpr_r info)
 instance Hashable info => Hashable (Pexpr_r info)
@@ -207,12 +207,12 @@ instance Hashable Wsize
 instance NFData Wsize where
     rnf = genericRnf
 instance Monad m => PP m Wsize where
-    pp W8   = return $ PP.text "u8"
-    pp W16  = return $ PP.text "u16"
-    pp W32  = return $ PP.text "u32"
-    pp W64  = return $ PP.text "u64"
-    pp W128 = return $ PP.text "u128"
-    pp W256 = return $ PP.text "u256"
+    pp W8   = return $ PP.text "8"
+    pp W16  = return $ PP.text "16"
+    pp W32  = return $ PP.text "32"
+    pp W64  = return $ PP.text "64"
+    pp W128 = return $ PP.text "128"
+    pp W256 = return $ PP.text "256"
 
 wordSize :: Wsize -> Int
 wordSize W8 = 8
@@ -231,7 +231,7 @@ sizeWord 128 = Just W128
 sizeWord 256 = Just W256
 sizeWord n = Nothing
 
-data Ptype info = TBool | TInt | TWord Wsize | TArray Wsize (Pexpr info)
+data Ptype info = TBool | TInt (Maybe Wsize) | TWord Wsize | TArray Wsize (Pexpr info)
     deriving (Data,Eq,Ord,Show,Typeable,Generic,Functor)
 instance Binary info => Binary (Ptype info)
 instance Hashable info => Hashable (Ptype info)
@@ -239,8 +239,13 @@ instance NFData info => NFData (Ptype info) where
     rnf = genericRnf
 instance Monad m => PP m (Ptype info) where
     pp TBool = return $ PP.text "bool"
-    pp TInt = return $ PP.text "int"
-    pp (TWord s) = pp s
+    pp (TInt Nothing) = return $ PP.text "int"
+    pp (TInt (Just w)) = do
+        pw <- pp w
+        return $ PP.text "int" <> pw
+    pp (TWord s) = do
+        ps <- pp s
+        return $ text "u" <> ps
     pp (TArray s e) = do
         ps <- pp s
         pe <- pp e
@@ -252,7 +257,7 @@ wordTy _ = Nothing
 isBoolType TBool = True
 isBoolType _ = False
 
-isNumericType TInt = True
+isNumericType (TInt _) = True
 isNumericType (TWord _) = True
 isNumericType _ = False
 
@@ -510,6 +515,18 @@ instance Monad m => PP m (Pbodyarg info) where
         pn <- pp n
         return $ pty <+> pn <> PP.semicolon
 
+data Annarg info = Annarg { aa_ty :: Ptype info, aa_name :: Pident info }
+    deriving (Eq,Ord,Show,Data,Typeable,Generic,Functor)
+instance Binary info => Binary (Annarg info)
+instance Hashable info => Hashable (Annarg info)
+instance NFData info => NFData (Annarg info) where
+    
+instance Monad m => PP m (Annarg info) where
+    pp (Annarg ty n) = do
+        pty <- pp ty
+        pn <- pp n
+        return $ pty <+> pn
+
 -- (* -------------------------------------------------------------------- *)
 data Pitem info
     = PFundef (Pfundef info)
@@ -623,6 +640,7 @@ data StatementAnnotation_r info
     = AssumeAnn Bool (Pexpr info)
     | AssertAnn Bool (Pexpr info)
     | EmbedAnn  Bool (Pinstr info)
+    | VarDefAnn (Annarg info)
   deriving (Show,Data,Typeable,Eq,Ord,Generic,Functor)
 
 instance (Binary info) => Binary (StatementAnnotation_r info)  
@@ -640,11 +658,14 @@ instance (Monad m) => PP m (StatementAnnotation_r info) where
     pp (EmbedAnn isLeak s) = do
         pps <- pp s
         return $ ppAnns $ ppLeak isLeak pps
+    pp (VarDefAnn x) = do
+        px <- pp x
+        return $ px <> PP.semicolon
 
 data AnnLemmaDeclaration info = AnnLemmaDeclaration
     { lemma_leak :: Bool -- is leakage
     , lemma_name :: (Pident info)
-    , lemma_args :: [Parg info]
+    , lemma_args :: [Annarg info]
     , lemma_anns :: [ProcedureAnnotation info]
     , lemma_body :: (Maybe (Pblock info))
     , lemma_info :: info
@@ -673,7 +694,7 @@ data AnnFunDeclaration info = AnnFunDeclaration
     { af_leak :: Bool -- is leakage
     , af_ty :: (Ptype info)
     , af_name :: (Pident info)
-    , af_args :: [Parg info]
+    , af_args :: [Annarg info]
     , af_anns :: [ProcedureAnnotation info]
     , af_body :: (Pexpr info)
     , af_info :: info
@@ -700,7 +721,7 @@ instance (Monad m) => PP m (AnnFunDeclaration info) where
 
 data AnnAxiomDeclaration info = AnnAxiomDeclaration
     { ax_leak :: Bool -- is leakage
-    , ax_args :: [Parg info]
+    , ax_args :: [Annarg info]
     , ax_anns :: [ProcedureAnnotation info]
     , ax_info :: info
     }
@@ -865,6 +886,12 @@ instance (Vars Piden m info) => Vars Piden m (Parg info) where
         ty' <- f ty
         n' <- inLHS False $ f n
         return $ Parg ty' n'
+
+instance (Vars Piden m info) => Vars Piden m (Annarg info) where
+    traverseVars f (Annarg ty n) = do
+        ty' <- f ty
+        n' <- inLHS False $ f n
+        return $ Annarg ty' n'
     
 instance (Vars Piden m info) => Vars Piden m (Pbodyarg info) where
     traverseVars f (Pbodyarg ty n) = do
@@ -1053,7 +1080,9 @@ instance (Vars Piden m info) => Vars Piden m (Pinstr_r info) where
 
 instance (Vars Piden m info) => Vars Piden m (Ptype info) where
     traverseVars f TBool = return TBool
-    traverseVars f TInt = return TInt
+    traverseVars f (TInt w) = do
+        w' <- mapM f w
+        return $ TInt w'
     traverseVars f (TWord w) = liftM TWord $ f w
     traverseVars f (TArray w e) = do
         w' <- f w
@@ -1099,6 +1128,9 @@ instance (Vars Piden m info) => Vars Piden m (StatementAnnotation_r info) where
         isLeak' <- f isLeak
         e' <- f e
         return $ EmbedAnn isLeak' e'
+    traverseVars f (VarDefAnn x) = do
+        x' <- f x
+        return $ VarDefAnn x
 
 instance (Vars Piden m info) => Vars Piden m (Pident info) where
     traverseVars f v@(Pident i n) = do

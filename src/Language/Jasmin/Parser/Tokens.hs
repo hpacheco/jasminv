@@ -40,6 +40,12 @@ data Token
     | T_U64 
     | T_U128
     | T_U256
+    | T_I8  
+    | T_I16 
+    | T_I32 
+    | T_I64 
+    | T_I128
+    | T_I256
     | T_BOOL
     | T_INT 
     | REG   
@@ -133,6 +139,12 @@ instance Monad m => PP m Token where
     pp T_U64    = return $ text "u64"
     pp T_U128   = return $ text "u128"
     pp T_U256   = return $ text "u256"
+    pp T_I8     = return $ text "int8"
+    pp T_I16    = return $ text "int16"
+    pp T_I32    = return $ text "int32"
+    pp T_I64    = return $ text "int64"
+    pp T_I128   = return $ text "int128"
+    pp T_I256   = return $ text "int256"
     pp T_BOOL   = return $ text "bool"
     pp T_INT    = return $ text "int"
     pp REG      = return $ text "reg"
