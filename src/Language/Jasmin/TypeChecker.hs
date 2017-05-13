@@ -42,8 +42,8 @@ peop2_of_eqop :: Peqop -> Maybe Peop2
 peop2_of_eqop RawEq  = Nothing
 peop2_of_eqop AddEq  = Just Add2
 peop2_of_eqop SubEq  = Just Sub2
-peop2_of_eqop MulEq  = Just (Mul2 Nothing)
-peop2_of_eqop ShREq  = Just Shr2
+peop2_of_eqop MulEq  = Just Mul2
+peop2_of_eqop ShREq  = Just $ Shr2 Unsigned
 peop2_of_eqop ShLEq  = Just Shl2
 peop2_of_eqop BAndEq = Just BAnd2
 peop2_of_eqop BXOrEq = Just BXor2
@@ -51,6 +51,8 @@ peop2_of_eqop BOrEq  = Just BOr2
 
 max_ty :: TcK m => JasminError -> Ptype info -> Ptype info -> TcM m (Ptype info)
 max_ty err (TInt Nothing) (TInt Nothing) = return (TInt Nothing)
+max_ty err t1@(TInt (Just w)) (TInt Nothing) = return t1
+max_ty err (TInt Nothing) t2@(TInt (Just w)) = return t2
 max_ty err (TInt Nothing) t2@(TWord _) = return t2
 max_ty err t1@(TWord _) (TInt Nothing) = return t1
 max_ty err t1@(TWord w1) (TWord w2) | w1 == w2 = return t1
@@ -60,7 +62,8 @@ cast_pexpr :: TcK m => Pexpr TyInfo -> Ptype TyInfo -> TcM m (Pexpr TyInfo)
 cast_pexpr e ty = do
     let ety = infoTyNote "cast_pexpr" $ loc e
     let eloc = infoLoc $ loc e
-    let cast' (TInt Nothing) (TInt Nothing) = return e
+    let cast' (TInt w1) (TInt w2) | w1 == w2 = return e
+        cast' (TInt Nothing) (TInt (Just w)) = return $ Pexpr (tyInfo $ TInt $ Just w) (Pcast (TInt $ Just w) e)
         cast' (TInt Nothing) (TWord w) = return $ Pexpr (tyInfo $ TWord w) (Pcast (TWord w) e)
         cast' (TWord w1) (TWord w2) | w1 == w2 = return e
         cast' ety ty = tyError eloc $ InvalidCast ety ty
@@ -73,20 +76,21 @@ tt_op2 l op e1 e2 = do
     case (op,ty1,ty2) of
         (isNumericPeop2 -> True,isNumericType -> True,isNumericType -> True) -> do
             ty <- max_ty (TypeCheckerError l $ InvOpInExpr op) ty1 ty2
-            e1' <- cast_pexpr e1 ty1
-            e2' <- cast_pexpr e2 ty2
-            case wordSizePeop2 op of
-                Just w -> do
-                    let tw = TWord w
-                    let e1'' = Pexpr (tyInfoLoc tw l) $ Pcast (TWord w) e1'
-                    let e2'' = Pexpr (tyInfoLoc tw l) $ Pcast (TWord w) e2'
-                    return (PEOp2 op e1'' e2'',tw)
-                Nothing -> return (PEOp2 op e1' e2',ty)
+            e1' <- cast_pexpr e1 ty
+            e2' <- cast_pexpr e2 ty
+            --case wordSizePeop2 op of
+            --    Just w -> do
+            --        let tw = TWord w
+            --        let e1'' = Pexpr (tyInfoLoc tw l) $ Pcast (TWord w) e1'
+            --        let e2'' = Pexpr (tyInfoLoc tw l) $ Pcast (TWord w) e2'
+             --       return (PEOp2 op e1'' e2'',tw)
+            --    Nothing ->
+            return (PEOp2 op e1' e2',ty)
         (isBoolPeop2 -> True,TBool,TBool) -> return (PEOp2 op e1 e2,TBool)
         (isCmpPeop2 -> Just _,ty1,ty2) -> do
             ty <- max_ty (TypeCheckerError l $ InvOpInExpr op) ty1 ty2
-            e1' <- cast_pexpr e1 ty1
-            e2' <- cast_pexpr e2 ty2
+            e1' <- cast_pexpr e1 ty
+            e2' <- cast_pexpr e2 ty
             return (PEOp2 op e1' e2',TBool)
         otherwise -> tyError l $ NoOperator op [ty1,ty2]
 
@@ -216,6 +220,26 @@ tt_lbool' x = do
     check_ty (loc x) TPBool (locTy x')
     return x'
 
+tt_lwords' :: TcK m => [Plvalue Position] -> TcM m [Plvalue TyInfo]
+tt_lwords' = aux Nothing
+    where
+    aux _ [] = return []
+    aux (Just w) (x:xs) = do
+        x' <- tt_lvalue x
+        x' <- check_lvalue_ty w x'
+        xs' <- aux (Just w) xs
+        return (x':xs')
+    aux Nothing (x:xs) = do
+        x' <- tt_lvalue x
+        xs' <- aux (locTy' x') xs
+        return (x':xs')
+
+tt_lword' :: TcK m => Plvalue Position -> TcM m (Plvalue TyInfo)
+tt_lword' x = do
+    x' <- tt_lvalue x
+    tx <- locTyM x'
+    return x'
+
 tt_lword :: TcK m => Plvalue Position -> TcM m (Plvalue TyInfo)
 tt_lword x = do
     x' <- tt_lvalue x
@@ -230,7 +254,7 @@ tt_lvalue (Plvalue l v) = do
 tt_lvalue_r :: TcK m => Position -> Plvalue_r Position -> TcM m (Plvalue_r TyInfo,Maybe (Ptype TyInfo))
 tt_lvalue_r p PLIgnore = return (PLIgnore,Nothing)
 tt_lvalue_r l (PLParens e) = do
-    e' <- mapM tt_lvalue e
+    e' <- mapM (tt_lvalue) e
     let tys = map locTy' e'
     t <- if all isJust tys
         then liftM Just $ tt_concat_types l (map fromJust tys)
@@ -238,7 +262,8 @@ tt_lvalue_r l (PLParens e) = do
     return (PLParens e',t)
 tt_lvalue_r p (PLVar x) = do
     x' <- tt_var x True
-    return (PLVar x',Just $ locTyNote "tt_lvalue_var" x')
+    let tx' = locTyNote "tt_lvalue_var" x'
+    return (PLVar x',Just tx')
 tt_lvalue_r p (PLArray x pi) = do
     x' <- tt_var x True
     i <- tt_index pi
@@ -253,8 +278,8 @@ tt_lvalue_r p (PLMem st x pe) = do
         if sty < w
             then tyError p $ InvalidCast (TWord sty) (TWord w)
             else return sty
-    let st'' = Just $ TWord $ maybe w id st'
-    return (PLMem st'' x' pe',st'')
+    let st'' = TWord $ maybe w id st'
+    return (PLMem (Just st'') x' pe',Just st'')
 
 tt_expr_of_lvalues :: MonadError JasminError m => Position -> [Plvalue info] -> m (Pexpr info)
 tt_expr_of_lvalues p [] = tyError p EqOpWithNoLValue
@@ -273,36 +298,6 @@ tt_expr_of_lvalue p (Plvalue i lv) = do
         return $ PEParens es'
     tt_expr_of_lvalue' p (PLMem t x e) = return $ PEFetch t x e
     tt_expr_of_lvalue' p lv = tyError p $ InvalidLRValue (Plvalue () $ funit lv)
-
---tt_opsrc :: TcK m => Maybe Eqoparg -> Maybe Peop2 -> Loc Position -> TcM m Opsrc 
---tt_opsrc lv Nothing (Loc _ (PEOp2 op pe1 pe2)) = do
---    case pe2 of
---        Loc _ (PEOp2 op' pe2 pe3) -> do
---            pe1' <- tt_expr pe1
---            pe2' <- tt_expr pe2
---            pe3' <- tt_expr pe3
---            return $ TriOp op op' pe1' pe2' pe3'
---        _ -> do
---            pe1' <- tt_expr pe1
---            pe2' <- tt_expr pe2
---            return $ BinOp op pe1' pe2'
---tt_opsrc (Just e1) (Just eqop) (Loc _ (PEOp2 op pe2 pe3)) = do
---    pe2' <- tt_expr pe2
---    pe3' <- tt_expr pe3
---    return $ TriOp eqop op e1 pe2' pe3'
---tt_opsrc (Just e1) (Just eqop) pe = do
---    pe' <- tt_expr pe
---    return $ BinOp eqop e1 pe'
---tt_opsrc lv Nothing pe = do
---    pe' <- tt_expr pe
-----    pe'' <- tt_shift_expr lv pe'
---    return $ NoOp pe'
-
--- special shift expressions
---tt_shift_expr :: TcK m => Eqoparg -> Pexpr TyInfo -> TcM m (PExpr TyInfo)
---tt_shift_expr lv@(locTy -> TWord wlv) re@(Loc _ (PEOp2 op@(flip elem [Shr2,Shl2] -> True) (Loc (infoTy -> TWord wtot) (PEParens es)) n@(locTy -> TInt))) = do
---    return $ Loc (loc lv) $ Pcast wlv $ Loc (loc re) $ PEOp2 Shr2 re (intLoc $ toEnum $ wordSize wtot - wordSize wlv)
---tt_shift_expr lv re = return re
 
 carry_op :: Peop2 -> Op
 carry_op Add2 = Oaddcarry
@@ -415,10 +410,10 @@ tt_loop_ann (LoopAnnotation l x) = withAnn (Just False) $ do
     return $ LoopAnnotation (decInfoLoc cl l) x'
     
 tt_loop_ann_r :: TcK m => Position -> LoopAnnotation_r Position -> TcM m (LoopAnnotation_r TyInfo)
-tt_loop_ann_r p (LDecreasesAnn isLeak e) = checkAnn p (Just isLeak) $ do
+tt_loop_ann_r p (LDecreasesAnn isFree e) = withAnn (Just False) $ do
     e' <- tt_expr e
-    return $ LDecreasesAnn isLeak e'
-tt_loop_ann_r p (LInvariantAnn isFree isLeak e) = checkAnn p (Just isLeak) $ do
+    return $ LDecreasesAnn isFree e'
+tt_loop_ann_r p (LInvariantAnn isFree isLeak e) = withAnn (Just isLeak) $ do
     e' <- tt_bool e
     return $ LInvariantAnn isFree isLeak e'
 
@@ -429,13 +424,13 @@ tt_proc_ann (ProcedureAnnotation p x) = withAnn (Just False) $ do
     return $ ProcedureAnnotation (decInfoLoc cl p) x'
 
 tt_proc_ann_r :: TcK m => Position -> ProcedureAnnotation_r Position -> TcM m (ProcedureAnnotation_r TyInfo)
-tt_proc_ann_r p (PDecreasesAnn e) = checkAnn p (Just False) $ do
+tt_proc_ann_r p (PDecreasesAnn e) = withAnn (Just False) $ do
     e' <- tt_expr e
     return $ PDecreasesAnn e'
-tt_proc_ann_r p (RequiresAnn isFree isLeak e) = checkAnn p (Just isLeak) $ do
+tt_proc_ann_r p (RequiresAnn isFree isLeak e) = withAnn (Just isLeak) $ do
     e' <- tt_bool e
     return $ RequiresAnn isFree isLeak e'
-tt_proc_ann_r p (EnsuresAnn isFree isLeak e) = checkAnn p (Just isLeak) $ do
+tt_proc_ann_r p (EnsuresAnn isFree isLeak e) = withAnn (Just isLeak) $ do
     e' <- tt_bool e
     return $ EnsuresAnn isFree isLeak e'
 
@@ -458,8 +453,20 @@ triOp2 _ = Nothing
 
 tt_native_instr_r :: TcK m => Position -> [Plvalue Position] -> Pexpr Position -> TcM m (Pinstr_r TyInfo)
 tt_native_instr_r p lvs re = 
-    tt_bv_carry_op p lvs re
-    
+    do      tt_bv_carry_op p lvs re
+    `mplus` tt_mul128_op p lvs re
+
+tt_mul128_op :: TcK m => Position -> [Plvalue Position] -> Pexpr Position -> TcM m (Pinstr_r TyInfo)
+tt_mul128_op p ls@[lx,ly] (binOp2 -> Just (Mul2,ex,ey)) = do
+    ls'@[lx',ly'] <- tt_lwords' ls
+    tx'@(TWord wx) <- locTyM lx'
+    ty'@(TWord wy) <- locTyM ly'
+    let txy = TWord (fromJust $ sizeWord $ wordSize wx + wordSize wy)
+    let ixy = tyInfoLoc txy p
+    ex' <- expr_ty_assign p ex tx'
+    ey' <- expr_ty_assign p ey ty'
+    return $ PIAssign [Plvalue ixy $ PLParens ls'] RawEq (Pexpr ixy $ PEOp2 Mul2 (Pexpr ixy $ Pcast txy ex') (Pexpr ixy $ Pcast txy ey')) Nothing
+tt_mul128_op p lvs re = genError p $ text "native instruction not supported"
 
 tt_bv_carry_op :: TcK m => Position -> [Plvalue Position] -> Pexpr Position -> TcM m (Pinstr_r TyInfo)
 tt_bv_carry_op p [lcf,lx] (triOp2 -> Just (o,ex,ey,ecf)) | isCarryOp o = do
@@ -478,76 +485,6 @@ tt_bv_carry_op p [lcf,lx] (binOp2 -> Just (o,ex,ey)) | isCarryOp o = do
     ey' <- expr_ty_assign p ey tw
     return $ Copn [lcf',lx'] (carry_op o) [ex',ey',falsePexpr]
 tt_bv_carry_op p lvs re = genError p $ text "native instruction not supported"
-
-    
-    
-    
-   
---tt_instr_r p (PIAssign ls eqop pe Nothing) = do
---    ct' <- mapM tt_type ct
---    lvs <- mapM tt_lvalue ls
---    let mksrc [flip elem [Just TInt,Just TBool] . locTy' -> True] (flip elem [RawEq,AddEq,SubEq] -> True) = do
---            e <- tt_expr pe
---            return $ ScalOp eqop e
---        mksrc lvs eqop = do
---            lve' <- catchErrorMaybe (tt_expr_of_lvalues p lvs)
---            let eqop' = peop2_of_eqop eqop
---            opsrc <- tt_opsrc lve' eqop' pe
---            return $ NoScalOp opsrc    
---    src <- mksrc lvs eqop
---    let mki :: TcK m => Maybe (Ptype TyInfo) -> [Loc TyInfo] -> IOp -> TcM m (Pinstr_r TyInfo)
---        mki Nothing [lv] (ScalOp eqop e) = do
---            e' <- case eqop of
---                RawEq -> return e
---                (flip elem [AddEq,SubEq] -> True) -> do
---                    lve <- tt_expr_of_lvalue lv
---                    check_ty_eq p (locTyNote "tt_instr_assignScal1" lv) TInt
---                    check_ty_eq p (locTyNote "tt_instr_assignScal2" e) TInt
---                    let Just op2 = peop2_of_eqop eqop
---                    return $ Loc (tyInfoLoc TInt p) (PEOp2 op2 lve e)
---            mapM_ (check_ty_eq p (locTyNote "tt_instr_assignScal3" e')) (locTy' lv)
---            return $ PIAssign Nothing [lv] RawEq e Nothing
---        mki Nothing [lv] (NoScalOp (NoOp e)) = do
---            forM (locTy' lv) (check_ty_assign p e)
---            return $ PIAssign Nothing [lv] RawEq e Nothing
---        mki Nothing [lv] (NoScalOp (BinOp o@(flip elem [Shl2,Shr2,BAnd2,BOr2,BXor2] -> True) e1 e2)) = do
---            let t1 = locTyNote "tt_instr_assignNoScal1" e1
---            check_ty p TPWord t1
---            e2 <- check_ty_assign p e2 (locTyNote "tt_instr_assignNoScal2" e1)
---            lvs <- check_sig_lvs p False [locTyNote "tt_instr_assignNoScal3" e1] lvs
---            let e = Loc (tyInfoLoc t1 p) $ PEOp2 o e1 e2
---            return $ PIAssign Nothing lvs RawEq e Nothing
---        -- carry-less operations
---        mki Nothing lvs (NoScalOp (BinOp o@(flip elem [Mul2] -> True) e1 e2)) = do
---            let t1 = locTyNote "tt_instr_assignNoScalMul1" e1
---            check_ty p TPWord t1
---            e2 <- check_ty_assign p e2 (locTyNote "tt_instr_assignNoScalMul2" e1)
---            lvs <- check_sig_lvs p False [locTyNote "tt_instr_assignNoScalMul3" e1] lvs
---            let e = Loc (tyInfoLoc t1 p) $ PEOp2 o e1 e2
---            return $ PIAssign Nothing lvs RawEq e Nothing
---        mki ct@(Just t@(TWord wres)) lvs (NoScalOp (BinOp o@(flip elem [Mul2] -> True) e1 e2)) = do
---            let t1 = locTyNote "tt_instr_assignNoScalMul4" e1
---            w1 <- tt_as_word p t1
---            unless (w1 <= wres) $ genError p $ text "word size unsupported"
---            e2 <- check_ty_assign p e2 (locTyNote "tt_instr_assignNOScalMul5" e1)
---            lvs <- check_sig_lvs p False [t] lvs
---            let e = Loc (tyInfoLoc t1 p) $ PEOp2 o (Loc (loc e1) $ Pcast wres e1) (Loc (loc e2) $ Pcast wres e2)
---            return $ PIAssign Nothing [Loc (tyInfoLoc (TWord wres) p) $ PLParens lvs] RawEq e Nothing
---        -- carry operations without explicit input carry flag
---        mki Nothing lvs (NoScalOp (BinOp o@(flip elem [Add2,Sub2] -> True) e1 e2)) = do
---            check_ty p TPWord (locTyNote "tt_instr_assignNoScalAdd1" e1)
---            e2 <- check_ty_assign p e2 (locTyNote "tt_instr_assignNoScalAdd2" e1)
---            lvs <- check_sig_lvs p True [TBool,locTyNote "tt_instr_assignNoScalAdd3" e1] lvs
---            return $ Copn lvs (carry_op o) [e1,e2,falsePexpr]
---        -- carry operations with explicit input carry flag
---        mki Nothing lvs (NoScalOp (TriOp op1@(flip elem [Add2,Sub2] -> True) op2 e1 e2 e3)) | op1 == op2 = do
---            check_ty p TPWord (locTyNote "tt_instr_assignTri1" e1)
---            e2 <- check_ty_assign p e2 (locTyNote "tt_instr_assignTri2" e1)
---            check_ty p TPBool (locTyNote "tt_instr_assignTri3" e3)
---            lvs <- check_sig_lvs p True [TBool,locTyNote "tt_instr_assignTri4" e1] lvs
---            return $ Copn lvs (carry_op op1) [e1,e2,e3]
---        mki ct lvs op = tyError p $ Unsupported $ text (show ct) <+> text (show lvs) <+> text "=" <+> text (show op)
---    mki ct' lvs src
 
 tt_block :: TcK m => Pblock Position -> TcM m (Pblock TyInfo)
 tt_block (Pblock l is) = tt_local $ do
@@ -608,41 +545,6 @@ tt_program :: TcK m => Pprogram Position -> TcM m (Pprogram TyInfo)
 tt_program (Pprogram pm) = liftM Pprogram $ mapM tt_item pm
 
 -- * State
-
---type Eqoparg = (Loc TyInfo)
-
---data Opsrc
---    = NoOp Eqoparg
---    | BinOp Peop2 Eqoparg Eqoparg
---    | TriOp Peop2 Peop2 Eqoparg Eqoparg Eqoparg
---  deriving (Eq,Ord,Show,Data,Typeable,Generic)
---
---instance Monad m => PP m Opsrc where
---    pp (NoOp o) = pp o
---    pp (BinOp o e1 e2) = do
---        p1 <- pp e1
---        p2 <- pp e2
---        po <- pp o
---        return $ p1 <+> po <+> p2
---    pp (TriOp o1 o2 e1 e2 e3) = do
---        po1 <- pp o1
---        po2 <- pp o2
---        pe1 <- pp e1
---        pe2 <- pp e2
---        pe3 <- pp e3
---        return $ pe1 <+> po1 <+> pe2 <+> po2 <+> pe3
---
---data IOp
---    = ScalOp Peqop (Loc TyInfo)
---    | NoScalOp Opsrc
---  deriving (Eq,Ord,Show,Data,Typeable,Generic)
---
---instance Monad m => PP m IOp where
---    pp (ScalOp o e) = do
---        po <- pp o
---        pe <- pp e
---        return $ po <+> pe
---    pp (NoScalOp o) = pp o
 
 type TcK m = Monad m
 type TcM m = StateT TcEnv (ExceptT JasminError m)

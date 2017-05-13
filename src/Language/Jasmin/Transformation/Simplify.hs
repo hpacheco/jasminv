@@ -184,19 +184,21 @@ simplifyPinstr_r i (PIFor n dir from to anns (Pblock bi b)) = do
     fromvs::Set Piden <- lift2 $ usedVars from
     tovs::Set Piden <- lift2 $ usedVars to
     let initi = decInfoLoc ((Map.empty,False),(Map.singleton v1 (vty,False),False)) p
-    let binit = case dir of
-                    Up -> Pinstr initi $ PIAssign [varPlvalue n] RawEq from Nothing
-                    Down -> Pinstr initi $ PIAssign [varPlvalue n] RawEq to Nothing
-    let c = case dir of
-                    Up -> Pexpr (tyInfoLoc TBool p) $ PEOp2 (Lt2 Unsigned) (varPexpr n) to
-                    Down -> Pexpr (tyInfoLoc TBool p) $ PEOp2 (Gt2 Unsigned) (varPexpr n) from
-    let bi' = bi { infoDecClass' = let ((rs,isg1),(ws,isg2)) = infoDecClass bi in Just ((Map.insert v1 (vty,False) rs,isg1),(Map.insert v1 (vty,True) ws,isg2)) }
+    let binit = Pinstr initi $ PIAssign [varPlvalue n] RawEq from Nothing
+    let cmp = case dir of { Up -> Lt2; Down -> Gt2 }
+    let c = Pexpr (tyInfoLoc TBool p) $ PEOp2 (cmp Unsigned) (varPexpr n) to
+    let bi' = bi { infoDecClass' = let ((rs,isg1),(ws,isg2)) = infoDecClass bi in Just ((Map.insert v1 (vty,False) rs,isg1),(Map.insert v1 (vty,False) ws,isg2)) }
     let incop = case dir of { Up -> Add2; Down -> Sub2 }
     let b' = Pblock bi' $ b ++ [Pinstr bi' $ PIAssign [varPlvalue n] RawEq (Pexpr (tyInfoLoc vty p) $ PEOp2 incop (varPexpr n) (intPexpr 1)) Nothing]
     let i' = i { infoDecClass' = let ((rs,isg1),(ws,isg2)) = infoDecClass i in Just ((Map.insert v1 (vty,False) rs,isg1),(Map.insert v1 (vty,False) ws,isg2)) }
-    let anninv1 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (Le2 Unsigned) from (varPexpr n)
-    let anninv2 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (Le2 Unsigned) (varPexpr n) to
-    concatMapM simplifyPinstr [binit,Pinstr i' $ PIWhile Nothing c (anns++[anninv1,anninv2]) $ Just b']
+    let invop = case dir of { Up -> Le2 ; Down -> Ge2 }
+    let anninv0 = case dir of
+                    Down -> LoopAnnotation (noTyInfo p) $ LDecreasesAnn False $ varPexpr n
+                    Up -> LoopAnnotation (noTyInfo p) $ LDecreasesAnn False $ Pexpr (tyInfoLoc vty p) $ PEOp2 Sub2 to (varPexpr n)
+    let anninv1 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (invop Unsigned) from (varPexpr n)
+    let anninv2 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (invop Unsigned) (varPexpr n) to
+    let anninvp = LoopAnnotation (noTyInfo p) $ LInvariantAnn False True $ Pexpr (tyInfo TBool) $ LeakExpr $ varPexpr n
+    concatMapM simplifyPinstr [binit,Pinstr i' $ PIWhile Nothing c (anns++[anninv0,anninv1,anninv2,anninvp]) $ Just b']
 simplifyPinstr_r i (PIWhile (Just b@(Pblock _ is)) c anns Nothing) = do
     (ianns1,ianns2) <- Utils.mapAndUnzipM loopAnn2StmtAnn anns
     concatMapM simplifyPinstr (concat ianns1 ++ is ++ concat ianns2 ++ [Pinstr i $ PIWhile Nothing c anns (Just b)])
@@ -287,6 +289,9 @@ simplifyPexpr_r (PEOp2 o e1 e2) = do
     e1' <- simplifyPexpr e1
     e2' <- simplifyPexpr e2
     return $ PEOp2 o' e1' e2'
+simplifyPexpr_r (LeakExpr e) = do
+    e' <- simplifyPexpr e
+    return $ LeakExpr e'
 
 simplifyPstotype :: SimplifyK m => Pstotype TyInfo -> SimplifyM m (Pstotype TyInfo)
 simplifyPstotype (sto,ty) = do

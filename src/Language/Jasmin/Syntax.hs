@@ -55,16 +55,13 @@ instance Hashable Sign
 instance NFData Sign where
     rnf = genericRnf
 instance Monad m => PP m Sign where
-    pp Signed  = return $ PP.text "signed"
+    pp Signed  = return $ PP.text "s"
     pp Unsigned  = return $ PP.empty
-
-wordSizePeop2 (Mul2 s) = s
-wordSizePeop2 _ = Nothing
 
 isNumericPeop2 Add2 = True
 isNumericPeop2 Sub2 = True
-isNumericPeop2 (Mul2 _) = True
-isNumericPeop2 Shr2 = True
+isNumericPeop2 (Mul2) = True
+isNumericPeop2 (Shr2 _) = True
 isNumericPeop2 Shl2 = True
 isNumericPeop2 BAnd2 = True
 isNumericPeop2 BOr2 = True
@@ -75,8 +72,8 @@ isBoolPeop2 And2 = True
 isBoolPeop2 Or2 = True
 isBoolPeop2 _ = False
 
-isCmpPeop2 (Eq2 s)  = Just s
-isCmpPeop2 (Neq2 s) = Just s
+isCmpPeop2 (Eq2)  = Just Unsigned
+isCmpPeop2 (Neq2) = Just Unsigned
 isCmpPeop2 (Lt2 s)  = Just s
 isCmpPeop2 (Le2 s)  = Just s
 isCmpPeop2 (Gt2 s)  = Just s
@@ -84,8 +81,8 @@ isCmpPeop2 (Ge2 s)  = Just s
 isCmpPeop2 _ = Nothing
 
 data Peop2 =
-  Add2 | Sub2 | Mul2 (Maybe Wsize) | And2 | Or2  | BAnd2 | BOr2 | BXor2 |
-  Shr2 | Shl2 | Eq2 Sign | Neq2 Sign | Lt2 Sign | Le2 Sign | Gt2 Sign | Ge2 Sign
+  Add2 | Sub2 | Mul2 | And2 | Or2  | BAnd2 | BOr2 | BXor2 |
+  Shr2 Sign | Shl2 | Eq2 | Neq2 | Lt2 Sign | Le2 Sign | Gt2 Sign | Ge2 Sign
     deriving (Eq,Ord,Show,Data,Typeable,Generic)
 instance Binary Peop2
 instance Hashable Peop2
@@ -94,34 +91,33 @@ instance NFData Peop2 where
 instance Monad m => PP m Peop2 where
     pp Add2  = return $ PP.text "+"
     pp Sub2  = return $ PP.text "-"
-    pp (Mul2 w)  = do
-        pw <- PP.ppOptM w $ \x -> liftM (PP.text "u" <>) (pp x)
-        return $ pw <+> PP.text "*"
+    pp (Mul2)  = do
+        return $ PP.text "*"
     pp And2  = return $ PP.text "&&"
     pp Or2   = return $ PP.text "||"
     pp BAnd2 = return $ PP.text "&"
     pp BOr2  = return $ PP.text "|"
     pp BXor2 = return $ PP.text "^"
-    pp Shr2  = return $ PP.text ">>"
+    pp (Shr2 s)  = do
+        ps <- pp s
+        return $ PP.text ">>" <> ps
     pp Shl2  = return $ PP.text "<<"
-    pp (Eq2 s)   = do
+    pp (Eq2)   = do
+        return $ PP.text "=="
+    pp (Neq2)  = do
+        return $ PP.text "!="
+    pp (Lt2 s)  = do
         ps <- pp s
-        return $ ps <> PP.text "=="
-    pp (Neq2 s)  = do
-        ps <- pp s
-        return $ ps <> PP.text "!="
-    pp (Lt2  s)  = do
-        ps <- pp s
-        return $ ps <> PP.text "<"
+        return $ PP.text "<" <> ps
     pp (Le2  s)  = do
         ps <- pp s
-        return $ ps <> PP.text "<="
+        return $ PP.text "<=" <> ps
     pp (Gt2  s)  = do
         ps <- pp s
-        return $ ps <> PP.text ">"
+        return $ PP.text ">" <> ps
     pp (Ge2  s)  = do
         ps <- pp s
-        return $ ps <> PP.text ">="
+        return $ PP.text ">=" <> ps
     
 data Quantifier
     = ForallQ
@@ -361,7 +357,7 @@ ppQuestion (Just v) doc = do
 instance Monad m => PP m (Pinstr_r info) where
     pp (PIAssign vs o e1 e2) = do
         pvs <- liftM PP.parens (PP.sepByM (mapM pp vs) PP.comma)
-        po <- pp o
+        po <- if null vs then return PP.empty else pp o
         pe1 <- pp e1
         pe2 <- PP.ppOptM e2 $ \x -> pp x >>= \px -> return $ PP.text "if" <+> px
         return $ pvs <+> po <+> pe1 <+> pe2 <> PP.semicolon
@@ -1059,11 +1055,11 @@ instance (Vars Piden m info) => Vars Piden m (Pinstr_r info) where
         b' <- f b
         return $ PIFor x' d' from' to' anns' b'
     traverseVars f (PIWhile b1 e anns b2) = do
-        b1' <- mapM f b2
+        b1' <- mapM f b1
         e' <- f e
         anns' <- f anns
         b2' <- mapM f b2
-        return $ PIWhile b1 e anns' b2
+        return $ PIWhile b1' e' anns' b2'
     traverseVars f (Copn ls o es) = do
         ls' <- mapM f ls
         o' <- f o

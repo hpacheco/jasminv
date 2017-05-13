@@ -78,8 +78,6 @@ tokens :-
 <0>                 do          { lexerTokenInfo DO }
 <0>                 to          { lexerTokenInfo TO }
 <0>                 downto      { lexerTokenInfo DOWNTO }
-<0>                 unsigned    { lexerTokenInfo UNSIGNED }
-<0>                 signed      { lexerTokenInfo SIGNED }
 <0>                 if          { lexerTokenInfo IF }
 <0>                 else        { lexerTokenInfo ELSE }
 <0>                 fn          { lexerTokenInfo FN }
@@ -125,10 +123,17 @@ tokens :-
 <0>                 "*="                  { lexerTokenInfo STAREQ }
 <0>                 "-="                 { lexerTokenInfo MINUSEQ }
 <0>                 "&="                 { lexerTokenInfo AMPEQ }
+
 <0>                 "<="                 { lexerTokenInfo LE }
 <0>                 "<"                { lexerTokenInfo LT_ }
 <0>                 ">="                  { lexerTokenInfo GE }
 <0>                 ">"                  { lexerTokenInfo GT_ }
+
+<0>                 "<=s"                 { lexerTokenInfo LE_SIGNED }
+<0>                 "<s"                { lexerTokenInfo LT_SIGNED }
+<0>                 ">=s"                  { lexerTokenInfo GE_SIGNED }
+<0>                 ">s"                  { lexerTokenInfo GT_SIGNED }
+
 <0>                 ".."                  { lexerTokenInfo DOTDOT }
 <0>                 ","                  { lexerTokenInfo COMMA }
 <0>                 ">>="                  { lexerTokenInfo GTGTEQ }
@@ -144,6 +149,7 @@ tokens :-
 <0>                 ";"                  { lexerTokenInfo SEMICOLON }
 <0>                 "!"                 { lexerTokenInfo BANG }
 <0>                 ">>"                  { lexerTokenInfo GTGT }
+<0>                 ">>s"                  { lexerTokenInfo GTGT_SIGNED }
 <0>                 "<<"                  { lexerTokenInfo LTLT }
 <0>                 "^"                  { lexerTokenInfo HAT }
 <0>                 "|"                  { lexerTokenInfo PIPE }

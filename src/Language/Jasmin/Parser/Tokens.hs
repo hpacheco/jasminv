@@ -66,8 +66,6 @@ data Token
     | RETURN
     | TO
     | DOWNTO
-    | SIGNED
-    | UNSIGNED
     
     | INT Integer
     | NID String
@@ -93,6 +91,10 @@ data Token
     | LT_         
     | GE         
     | GT_         
+    | LE_SIGNED         
+    | LT_SIGNED         
+    | GE_SIGNED         
+    | GT_SIGNED
     | DOTDOT     
     | COMMA      
     | GTGTEQ      
@@ -107,7 +109,8 @@ data Token
     | PIPEPIPE        
     | SEMICOLON  
     | BANG       
-    | GTGT        
+    | GTGT       
+    | GTGT_SIGNED        
     | LTLT        
     | HAT        
     | PIPE       
@@ -165,8 +168,6 @@ instance Monad m => PP m Token where
     pp RETURN   = return $ text "return"
     pp TO       = return $ text "to"
     pp DOWNTO   = return $ text "downto"
-    pp SIGNED     = return $ text "signed"
-    pp UNSIGNED     = return $ text "unsigned"
     
     pp (INT i) = return $ integer i
     pp (NID s) = return $ text s
@@ -192,6 +193,10 @@ instance Monad m => PP m Token where
     pp LT_         = return $ text "<"   
     pp GE          = return $ text ">="  
     pp GT_         = return $ text ">"   
+    pp LE_SIGNED          = return $ text "<=s"  
+    pp LT_SIGNED         = return $ text "<s"   
+    pp GE_SIGNED          = return $ text ">=s"  
+    pp GT_SIGNED         = return $ text ">s"   
     pp DOTDOT      = return $ text ".."  
     pp COMMA       = return $ text ","   
     pp GTGTEQ       = return $ text ">>=" 
@@ -207,6 +212,7 @@ instance Monad m => PP m Token where
     pp SEMICOLON   = return $ text ";"   
     pp BANG        = return $ text "!"   
     pp GTGT         = return $ text ">>"  
+    pp GTGT_SIGNED = return $ text ">>s"
     pp LTLT         = return $ text "<<"  
     pp HAT         = return $ text "^"   
     pp PIPE          = return $ text "|"   

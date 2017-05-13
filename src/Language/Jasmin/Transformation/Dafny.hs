@@ -78,9 +78,9 @@ pfundefToDafny def@(Pfundef cc pn pargs pret procann (Pfunbody pbvars pbinstrs p
             (perets) <- mapM (pidentToDafny) erets
             return (text "return" <+> sepBy perets comma <> semicolon)
     let tag = text "method"
-    let anns' = parganns ++ pretanns ++ annb1 ++ annb2
+    let anns' = parganns ++ pretanns
     annframes <- dropAssumptions newvs $ propagateDafnyAssumptions p EnsureK cl
-    return $ (tag <+> ppn <+> ppargs <+> pret $+$ pcl $+$ annLinesProcC (annframes++pprocann) $+$ annLinesProcC anns' $+$ vbraces (pbody1 $+$ pbody2 $+$ pbody3))
+    return $ (tag <+> ppn <+> ppargs <+> pret $+$ pcl $+$ annLinesProcC (annframes++pprocann) $+$ annLinesProcC anns' $+$ vbraces (pbody1 $+$ annLinesProcC annb1 $+$ pbody2 $+$ annLinesProcC annb2 $+$ pbody3))
   where
     did = pidentToDafnyId pn
 
@@ -181,6 +181,18 @@ pinstr_rToDafny l (PIWhile Nothing e ann (Just s)) = do
     (ps,ann2) <- pblockToDafny s
     (pw,anns) <- addAnnsC StmtKC (anne++ann2) $ vbraces ps
     return (text "while" <+> pe $+$ invs $+$ annLinesProcC annframes $+$ pw,anns)
+pinstr_rToDafny l (PIAssign [lv] RawEq (Pexpr ie (PEFetch {})) Nothing) = do -- FIXME: hack to ignore memory accesses
+    let p = infoLoc l
+    let tlv = locTy lv
+    v1@(Pident () n) <- lift2 $ mkNewVar "new"
+    let v = Pident ie n
+    pv <- pidentToDafny v
+    (pt,annt) <- ptypeToDafny StmtK (Just v) tlv
+    let pdef = text "var" <+> pv <+> char ':' <+> pt <> semicolon
+    (pass,pres,post) <- passToDafny p StmtK [lv] (Nothing,pv)
+    let (anns1,pres') = annLinesC StmtKC (pres)
+    let (anns2,post') = annLinesC StmtKC post
+    return (pdef $+$ pres' $+$ pass $+$ post',annt++anns1++anns2) 
 pinstr_rToDafny l (PIAssign ls RawEq re Nothing) = do
     (pre,pres) <- pexprToDafny StmtK IsPrivate re
     lvs <- lift2 $ usedVars ls    
@@ -263,6 +275,7 @@ passToDafny p annK ls e = do
         return (vcat pdefs $+$ asse $+$ vcat assls,concat annpre,concat annsdefs ++ concat annpos)
 
 assign :: DafnyK m => Position -> [(Plvalue TyInfo,Doc)] -> (Maybe [Pexpr TyInfo],Doc) -> DafnyM m Doc
+assign p [] (_,pe) = return $ pe <> semicolon
 assign p xs (mb,pe) = do
     let (vxs,pxs) = unzip xs
     let copy (Plvalue _ (PLVar v)) (Pexpr _ (PEVar v')) = copyDafnyAssumptions p v' v
@@ -401,42 +414,62 @@ procCallArgToDafny :: DafnyK m => AnnKind -> Pexpr TyInfo -> DafnyM m (Doc,AnnsD
 procCallArgToDafny annK e = pexprToDafny annK IsPrivate e
 
 peop1ToDafny :: DafnyK m => AnnKind -> CtMode -> TyInfo -> Set Piden -> Peop1 -> Pexpr TyInfo -> DafnyM m (Doc,AnnsDoc)
-peop1ToDafny annK ct l vs Not1 e1 = nativeop1ToDafny annK ct l vs (char '!') e1
+peop1ToDafny annK ct l vs Not1 e1 = nativeop1ToDafny annK ct l vs (char '!' <>) e1
 
 peop2ToDafny :: DafnyK m => AnnKind -> CtMode -> TyInfo -> Set Piden -> Peop2 -> Pexpr TyInfo -> Pexpr TyInfo -> DafnyM m (Doc,AnnsDoc)
-peop2ToDafny annK ct l vs Add2 e1 e2  = nativeop2ToDafny annK ct l vs (text "+") e1 e2
-peop2ToDafny annK ct l vs Sub2 e1 e2  = nativeop2ToDafny annK ct l vs (text "-") e1 e2
-peop2ToDafny annK ct l vs (Mul2 _) e1 e2  = nativeop2ToDafny annK ct l vs (text "*") e1 e2
-peop2ToDafny annK ct l vs (Eq2 s) e1 e2   = nativeop2ToDafny annK ct l vs (text "==") (toSign e1 s) (toSign e2 s)
-peop2ToDafny annK ct l vs (Neq2 s) e1 e2  = nativeop2ToDafny annK ct l vs (text "!=") (toSign e1 s) (toSign e2 s)
-peop2ToDafny annK ct l vs (Le2 s) e1 e2   = nativeop2ToDafny annK ct l vs (text "<=") (toSign e1 s) (toSign e2 s)
-peop2ToDafny annK ct l vs (Lt2 s) e1 e2   = nativeop2ToDafny annK ct l vs (text "<") (toSign e1 s) (toSign e2 s)
-peop2ToDafny annK ct l vs (Ge2 s) e1 e2   = nativeop2ToDafny annK ct l vs (text ">=") (toSign e1 s) (toSign e2 s)
-peop2ToDafny annK ct l vs (Gt2 s) e1 e2   = nativeop2ToDafny annK ct l vs (text ">") (toSign e1 s) (toSign e2 s)
-peop2ToDafny annK ct l vs Shl2 e1 e2  = nativeop2ToDafny annK ct l vs (text "<<") e1 e2
-peop2ToDafny annK ct l vs Shr2 e1 e2  = nativeop2ToDafny annK ct l vs (text ">>") e1 e2
-peop2ToDafny annK ct l vs And2 e1 e2  = nativeop2ToDafny annK ct l vs (text "&&") e1 e2
-peop2ToDafny annK ct l vs Or2 e1 e2   = nativeop2ToDafny annK ct l vs (text "||") e1 e2
-peop2ToDafny annK ct l vs BAnd2 e1 e2 = nativeop2ToDafny annK ct l vs (text "&") e1 e2
-peop2ToDafny annK ct l vs BOr2 e1 e2  = nativeop2ToDafny annK ct l vs (text "|") e1 e2
-peop2ToDafny annK ct l vs BXor2 e1 e2 = nativeop2ToDafny annK ct l vs (text "^") e1 e2
+peop2ToDafny annK ct l vs Add2 e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "+") e1 e2
+peop2ToDafny annK ct l vs Sub2 e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "-") e1 e2
+peop2ToDafny annK ct l vs (Mul2) e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "*") e1 e2
+peop2ToDafny annK ct l vs (Eq2) e1 e2   = nativeop2ToDafny annK ct l vs (fop2 "==") e1 e2
+peop2ToDafny annK ct l vs (Neq2) e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "!=") e1 e2
+peop2ToDafny annK ct l vs (Le2 Unsigned) e1 e2   = nativeop2ToDafny annK ct l vs (fop2 "<=") e1 e2
+peop2ToDafny annK ct l vs (Lt2 Unsigned) e1 e2   = nativeop2ToDafny annK ct l vs (fop2 "<") e1 e2
+peop2ToDafny annK ct l vs (Ge2 Unsigned) e1 e2   = nativeop2ToDafny annK ct l vs (fop2 ">=") e1 e2
+peop2ToDafny annK ct l vs (Gt2 Unsigned) e1 e2   = nativeop2ToDafny annK ct l vs (fop2 ">") e1 e2
+peop2ToDafny annK ct l vs (Le2 Signed) e1@(locTy -> TWord w) e2   = do
+    -- x <=s y = (y - x) >> 63 == 0
+    let fop x y = parens (parens (y <+> text "-" <+> x) <+> text ">>" <+> int (wordSize w-1)) <+> text "== 0"
+    nativeop2ToDafny annK ct l vs fop e1 e2
+peop2ToDafny annK ct l vs (Lt2 Signed) e1@(locTy -> TWord w) e2 = do
+    -- x <s y = (x - y) >> 63 == 1
+    let fop x y = parens (parens (x <+> text "-" <+> y) <+> text ">>" <+> int (wordSize w-1)) <+> text "== 1"
+    nativeop2ToDafny annK ct l vs fop e1 e2
+peop2ToDafny annK ct l vs (Gt2 Signed) e1@(locTy -> TWord w) e2   = do
+    -- x >s y = (y - x) >> 63 == 1
+    let fop x y = parens (parens (y <+> text "-" <+> x) <+> text ">>" <+> int (wordSize w-1)) <+> text "== 1"
+    nativeop2ToDafny annK ct l vs fop e1 e2
+peop2ToDafny annK ct l vs (Ge2 Signed) e1@(locTy -> TWord w) e2   = do
+    -- x >=s y = (x - y) >> 63 == 0
+    let fop x y = parens (parens (x <+> text "-" <+> y) <+> text ">>" <+> int (wordSize w-1)) <+> text "== 0"
+    nativeop2ToDafny annK ct l vs fop e1 e2
+peop2ToDafny annK ct l vs Shl2 e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "<<") e1 e2
+peop2ToDafny annK ct l vs (Shr2 Unsigned) e1 e2  = nativeop2ToDafny annK ct l vs (fop2 ">>") e1 e2
+peop2ToDafny annK ct l vs And2 e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "&&") e1 e2
+peop2ToDafny annK ct l vs Or2 e1 e2   = nativeop2ToDafny annK ct l vs (fop2 "||") e1 e2
+peop2ToDafny annK ct l vs BAnd2 e1 e2 = nativeop2ToDafny annK ct l vs (fop2 "&") e1 e2
+peop2ToDafny annK ct l vs BOr2 e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "|") e1 e2
+peop2ToDafny annK ct l vs BXor2 e1 e2 = nativeop2ToDafny annK ct l vs (fop2 "^") e1 e2
+peop2ToDafny annK ct l vs op e1 e2 = do
+    po <- pp op
+    pe1 <- pp e1
+    pe2 <- pp e2
+    genError (infoLoc l) $ text "unsupported binary operation: " <+> po <+> pe1 <+> pe2
 
+fop2 o x y = x <+> text o <+> y
 castInt e = Pexpr (tyInfo $ TInt Nothing) $ Pcast (TInt Nothing) e
-toSign e Signed = castInt e
-toSign e Unsigned = e
 
-nativeop1ToDafny :: DafnyK m => AnnKind -> CtMode -> TyInfo -> Set Piden -> Doc -> Pexpr TyInfo -> DafnyM m (Doc,AnnsDoc)
-nativeop1ToDafny annK ct l vs op e1 = do
+nativeop1ToDafny :: DafnyK m => AnnKind -> CtMode -> TyInfo -> Set Piden -> (Doc -> Doc) -> Pexpr TyInfo -> DafnyM m (Doc,AnnsDoc)
+nativeop1ToDafny annK ct l vs fop e1 = do
     (pe1,anne1) <- pexprToDafny annK IsPrivate e1
-    let pe = parens $ op <> pe1
+    let pe = parens $ fop pe1
     annp <- genDafnyAssumptions annK ct vs pe l
     return (pe,anne1++annp)
 
-nativeop2ToDafny :: DafnyK m => AnnKind -> CtMode -> TyInfo -> Set Piden -> Doc -> Pexpr TyInfo -> Pexpr TyInfo -> DafnyM m (Doc,AnnsDoc)
-nativeop2ToDafny annK ct l vs op e1 e2 = do
+nativeop2ToDafny :: DafnyK m => AnnKind -> CtMode -> TyInfo -> Set Piden -> (Doc -> Doc -> Doc) -> Pexpr TyInfo -> Pexpr TyInfo -> DafnyM m (Doc,AnnsDoc)
+nativeop2ToDafny annK ct l vs fop e1 e2 = do
     (pe1,anne1) <- pexprToDafny annK IsPrivate e1
     (pe2,anne2) <- pexprToDafny annK IsPrivate e2
-    let pe = parens $ pe1 <+> op <+> pe2
+    let pe = parens $ fop pe1 pe2
     annp <- genDafnyAssumptions annK ct vs pe l
     return (pe,anne1++anne2++annp)
 
