@@ -250,23 +250,23 @@ simplifyPblock (Pblock i is) = do
     is' <- concatMapM simplifyPinstr is
     return $ Pblock i' is'
 
-simplifyPexpr :: SimplifyK m => Pexpr TyInfo -> SimplifyM m (Pexpr TyInfo)
+simplifyPexpr :: SimplifyK m => Pexpr TyInfo -> SimplifyM m ([Pinstr TyInfo],Pexpr TyInfo)
 simplifyPexpr (Pexpr i e) = do
     i' <- simplifyTyInfo i
-    e' <- simplifyPexpr_r e
-    return $ Pexpr i' e'
+    (ss,e') <- simplifyPexpr_r e
+    return (ss,Pexpr i' e')
 
-simplifyPexpr_r :: SimplifyK m => Pexpr_r TyInfo -> SimplifyM m (Pexpr_r TyInfo)
+simplifyPexpr_r :: SimplifyK m => Pexpr_r TyInfo -> SimplifyM m ([Pinstr TyInfo],Pexpr_r TyInfo)
 simplifyPexpr_r (PEParens es) = do
-    es' <- mapM simplifyPexpr es
-    return $ PEParens es'
+    (concat -> ss,es') <- Utils.mapAndUnzipM simplifyPexpr es
+    return (ss,PEParens es')
 simplifyPexpr_r (PEVar n) = do
     n' <- simplifyPident n
     return $ PEVar n'
 simplifyPexpr_r (PEGet n e) = do
     n' <- simplifyPident n
-    e' <- simplifyPexpr e
-    return $ PEGet n' e'
+    (ss,e') <- simplifyPexpr e
+    return (ss,PEGet n' e')
 simplifyPexpr_r (PEFetch t n e) = do
     t' <- mapM simplifyPtype t
     n' <- simplifyPident n
