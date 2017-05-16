@@ -77,4 +77,15 @@ predicate Leak<T> (x: T)
 // used to mark leakage annotations, since Dafny does not allow attributes everywhere
 function Leakage (x: bool) : bool
 function Free (x: bool) : bool
+    
+// Safety of pointer operations
+    
+predicate Valid<T> (x: T, i: int)
+
+predicate ValidRange<T>(x: T, min : int, max: int)
+{
+  forall i :: min <= i <= max ==> Valid(x,i)
+}
+    
+     
 

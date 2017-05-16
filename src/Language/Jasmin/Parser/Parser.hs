@@ -37,29 +37,23 @@ var = ident <?> "var"
 -- (* ** Type expressions
 --  * -------------------------------------------------------------------- *)
  
-utype :: Monad m => ParserT m Wsize
-utype = toK T_U8 W8
-    <|> toK T_U16 W16
-    <|> toK T_U32 W32
-    <|> toK T_U64 W64
-    <|> toK T_U128 W128
-    <|> toK T_U256 W256
-    <?> "utype"
+utype :: Monad m => ParserT m (Ptype Position)
+utype = tokWith getInt <?> "utype"
+ where
+ getInt t@(tSymb -> T_U i) = Just $ TWord i
+ getInt t = Nothing
 
-itype :: Monad m => ParserT m Wsize
-itype = toK T_I8 W8
-    <|> toK T_I16 W16
-    <|> toK T_I32 W32
-    <|> toK T_I64 W64
-    <|> toK T_I128 W128
-    <|> toK T_I256 W256
-    <?> "itype"
+itype :: Monad m => ParserT m (Ptype Position)
+itype = tokWith getInt <?> "inttype"
+ where
+ getInt t@(tSymb -> T_I i) = Just $ TInt $ Just i
+ getInt t = Nothing
 
 ptype_ :: MonadIO m => ParserT m (Ptype Position)
 ptype_ = toK T_BOOL TBool
      <|> toK T_INT (TInt Nothing)
-     <|> ann (apA itype (TInt . Just))
-     <|> apA2 utype (optionMaybe $ brackets pexpr) (\ut mbd -> case mbd of { Nothing -> TWord ut; Just d -> TArray ut d })
+     <|> ann itype
+     <|> apA2 utype (optionMaybe $ brackets pexpr) (\(TWord w) mbd -> case mbd of { Nothing -> TWord w; Just d -> TArray w d })
      <?> "ptype_"
 
 -- (* ** Index expressions
@@ -90,6 +84,7 @@ peop2 LE_SIGNED     = (toK LE_SIGNED $ Le2 Signed)
 peop2 GT_SIGNED     = (toK GT_SIGNED $ Gt2 Signed)
 peop2 GE_SIGNED     = (toK GE_SIGNED $ Ge2 Signed)
 peop2 STAR          = (toK STAR Mul2)
+peop2 MOD          = (toK MOD Mod2)
 
 pexpr :: MonadIO m => ParserT m (Pexpr Position)
 pexpr = mkPexprs2 atom_expr precedences
@@ -104,7 +99,7 @@ pexpr = mkPexprs2 atom_expr precedences
         ,(False,[LE,LE_SIGNED,GE,GE_SIGNED,LT_,LT_SIGNED,GT_,GT_SIGNED])
         ,(False,[LTLT,GTGT,GTGT_SIGNED])
         ,(False,[PLUS,MINUS])
-        ,(False,[STAR])
+        ,(False,[STAR,MOD])
         ]
 
 mkPexprs2 :: Monad m => ParserT m (Pexpr Position) -> [(Bool,[Token])] -> ParserT m (Pexpr Position)
@@ -124,12 +119,13 @@ atom_expr = (liftM (\(Loc l x) -> Pexpr l x) $ locp atom_expr_r) <?> "non2expr"
 
 atom_expr_r :: MonadIO m => ParserT m (Pexpr_r Position)
 atom_expr_r =
-           apA2 (parens ptype_) var (\t v -> Pcast t (varPexpr v))
+           apA2 (parens ptype_) atom_expr (\t e -> Pcast t e)
       <||> apA2 ident (parens_tuple pexpr) (\fname args -> PECall fname args)
       <||> apA2 var (optionMaybe $ brackets pexpr) (\v mbi -> case mbi of { Nothing -> PEVar v; Just i -> PEGet v i })
       <|> toK TRUE (PEBool True)
       <|> toK FALSE (PEBool False)
       <|> ann (apA2 (tok PUBLIC) (parens pexpr) (\x1 x2 -> LeakExpr x2))
+      <|> ann (apA2 (tok VALID) (parens_tuple pexpr) (\x1 x2 -> ValidExpr x2))
       <|> quantifiedExpr
       <|> tokWith getInt
       <|> apA2 peop1 atom_expr (\o e -> PEOp1 o e)
@@ -142,7 +138,7 @@ atom_expr_r =
   getInt t = Nothing
 
 quantifiedExpr :: MonadIO m => ParserT m (Pexpr_r Position)
-quantifiedExpr = ann $ apA4 quantifier (sepBy1 annarg (tok COMMA)) (tok SEMICOLON) pexpr (\x1 x2 x3 x4 -> QuantifiedExpr x1 x2 x4)
+quantifiedExpr = ann $ apA4 quantifier (sepBy1 annargNoExpr (tok COMMA)) (tok SEMICOLON) pexpr (\x1 x2 x3 x4 -> QuantifiedExpr x1 x2 x4)
 
 quantifier :: Monad m => ParserT m Quantifier
 quantifier = toK FORALL ForallQ <|> toK EXISTS ExistsQ
@@ -232,14 +228,17 @@ pfunbody = apA5
 parg :: MonadIO m => ParserT m (Parg Position)
 parg = apA2 (stor_type) (optionMaybe var) (\ty n -> Parg ty n)
 
-annarg :: MonadIO m => ParserT m (Annarg Position)
-annarg = apA2 ptype_ var (\ty n -> Annarg ty n)
+annargExpr :: MonadIO m => ParserT m (Annarg Position)
+annargExpr = apA3 ptype_ var (optionMaybe $ tok EQ_ *> pexpr) (\ty n e -> Annarg ty n e)
+
+annargNoExpr :: MonadIO m => ParserT m (Annarg Position)
+annargNoExpr = apA2 ptype_ var (\ty n -> Annarg ty n Nothing)
 
 pannaxiomdef :: MonadIO m => ParserT m (AnnAxiomDeclaration Position)
 pannaxiomdef = apA4
     (locp leak)
     (tok AXIOM)
-    (parens_tuple annarg)
+    (parens_tuple annargNoExpr)
     procedureAnnotations
     (\(Loc p isLeak) _ args anns -> AnnAxiomDeclaration isLeak args anns p)
 
@@ -248,7 +247,7 @@ pannlemmadef = apA6
     (locp leak)
     (tok LEMMA)
     ident
-    (parens_tuple annarg)
+    (parens_tuple annargNoExpr)
     procedureAnnotations
     (optionMaybe pblock)
     (\(Loc p isLeak) _ name args anns body -> AnnLemmaDeclaration isLeak name args anns body p)
@@ -258,7 +257,7 @@ pannfundef = apA8
     (locp leak)
     (tok FUNCTION)
     ident
-    (parens_tuple annarg)
+    (parens_tuple annargNoExpr)
     (tok RARROW)
     ptype_
     procedureAnnotations
@@ -418,7 +417,7 @@ statementAnnotation_r = vardef <||> (do
     isLeak <- leak
     (o1 isLeak <|> o2 isLeak <||> o3 isLeak))
   where
-    vardef = apA2 annarg (tok SEMICOLON) (\ann _ -> VarDefAnn ann)
+    vardef = apA2 annargExpr (tok SEMICOLON) (\ann _ -> VarDefAnn ann)
     o1 isLeak = apA3 (tok ASSUME) pexpr (tok SEMICOLON) (\x1 x2 x3 -> AssumeAnn isLeak x2)
     o2 isLeak = apA3 (tok ASSERT) pexpr (tok SEMICOLON) (\x1 x2 x3 -> AssertAnn isLeak x2)
     o3 isLeak = apA pinstr (\x1 -> EmbedAnn isLeak x1)

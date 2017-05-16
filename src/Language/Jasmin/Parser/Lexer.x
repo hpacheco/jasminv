@@ -35,6 +35,9 @@ $underscore = _
 @declit   = (\-?$digit+)
 @hexlit   = (0x$hexdigit+)
 
+@utype    = u$digit+
+@inttype    = int$digit+
+
 tokens :-
 
 
@@ -50,18 +53,8 @@ tokens :-
 
 -- Keywords:
 
-<0>                 u8          { lexerTokenInfo T_U8 }
-<0>                 u16         { lexerTokenInfo T_U16 }
-<0>                 u32         { lexerTokenInfo T_U32 }
-<0>                 u64         { lexerTokenInfo T_U64 }
-<0>                 u128        { lexerTokenInfo T_U128 }
-<0>                 u256        { lexerTokenInfo T_U256 }
-<0>                 int8          { lexerTokenInfo T_I8 }
-<0>                 int16         { lexerTokenInfo T_I16 }
-<0>                 int32         { lexerTokenInfo T_I32 }
-<0>                 int64         { lexerTokenInfo T_I64 }
-<0>                 int128        { lexerTokenInfo T_I128 }
-<0>                 int256        { lexerTokenInfo T_I256 }
+<0>                 @utype          { lexerTokenInfoFunc ( return . T_U . getusize) }
+<0>                 @inttype         { lexerTokenInfoFunc ( return . T_U . getintsize) }
 <0>                 bool        { lexerTokenInfo T_BOOL }
 <0>                 int         { lexerTokenInfo T_INT }
 <0>                 reg         { lexerTokenInfo REG }
@@ -84,6 +77,7 @@ tokens :-
 <0>                 return      { lexerTokenInfo RETURN }
 
 <0>                 free        { lexerAnnTokenInfo FREE }
+<0>                 valid       { lexerAnnTokenInfo VALID }
 <0>                 leakage     { lexerAnnTokenInfo LEAKAGE }
 <0>                 public      { lexerAnnTokenInfo PUBLIC }
 <0>                 function    { lexerAnnTokenInfo FUNCTION }
@@ -124,6 +118,7 @@ tokens :-
 <0>                 "-="                 { lexerTokenInfo MINUSEQ }
 <0>                 "&="                 { lexerTokenInfo AMPEQ }
 
+<0>                 "%"                 { lexerTokenInfo MOD }
 <0>                 "<="                 { lexerTokenInfo LE }
 <0>                 "<"                { lexerTokenInfo LT_ }
 <0>                 ">="                  { lexerTokenInfo GE }
@@ -163,6 +158,12 @@ tokens :-
 {
 
 -- Token Functions -------------------------------------------------------------
+
+getusize :: String -> Int
+getusize str = read $ tail str
+
+getintsize :: String -> Int
+getintsize str = read $ drop 3 str
 
 lexerAnnTokenInfo :: Token -> AlexInput -> Int -> Alex TokenInfo
 lexerAnnTokenInfo t inp l = do

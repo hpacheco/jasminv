@@ -299,16 +299,16 @@ passToDafny' p annK lv@(Plvalue li lvr) re = passToDafny'' lvr re
         pass <- assign p [(lv,plv)] (Nothing,plv <> upd)
         return (pass,annlv,annlv)
     passToDafny'' (PLParens ps) (Left (re,pre)) = do
-        let TWord (wordSize -> wtot) = infoTyNote "passToDafny" li
+        let TWord wtot = infoTyNote "passToDafny" li
         let mask doc 0 wx = doc
             mask doc offset wx = doc <+> text "&" <+> text "0x" <> hcat (replicate (div (wtot-wx) 4) $ text "0") <> hcat (replicate (div wx 4) $ text "F")
         let getbits offset [] = return (PP.empty,[],[])
             getbits offset (Plvalue tx PLIgnore:xs) = do
-                let TWord (wordSize -> wx) = infoTyNote "passToDafny" tx 
+                let TWord wx = infoTyNote "passToDafny" tx 
                 getbits (offset + wx) xs
             getbits offset (x:xs) = do
                 (ppx,annx) <- plvalueToDafny annK IsPrivate x
-                let TWord (wordSize -> wx) = locTyNote "passToDafny" x
+                let TWord wx = locTyNote "passToDafny" x
                 let px = ppx <+> text ":=" <+> castAs (mask (shift_right pre (wtot - offset - wx)) offset wx) (text "bv" <> int wx) <> semicolon
                 (pxs,[],annxs) <- getbits (offset + wx) xs
                 return (px $+$ pxs,[],annx++annxs)
@@ -361,7 +361,8 @@ pexpr_rToDafny annK ct l e@(PEGet n i) = do
     let pse = pn <> brackets (castAs pi $ text "int")
     annp <- genDafnyAssumptions annK ct vs pse l
     return (pse,annn++anni++annp)
-pexpr_rToDafny annK ct l fe@(PEFetch t v e) = genError (infoLoc l) $ text "expression fetch not yet supported"
+pexpr_rToDafny annK ct l fe@(PEFetch t v e) = do
+    genError (infoLoc l) $ text "expression fetch not yet supported"
 pexpr_rToDafny annK ct l (PEParens es) = parens_exprToDafny annK ct l es
 pexpr_rToDafny annK ct l e@(PEOp1 o e1) = do
     vs <- lift2 $ usedVars e
@@ -375,6 +376,16 @@ pexpr_rToDafny annK ct l le@(LeakExpr e) = do
     if leakMode
         then return (text "Leak" <> parens pe,anne)
         else return (text "true",anne)
+pexpr_rToDafny annK ct l (ValidExpr [x,e]) = do
+    (px,annx) <- pexprToDafny annK IsPrivate x
+    (pe,anne) <- pexprToDafny annK IsPrivate e
+    return (text "Valid" <> parens (px <> comma <> pe),annx++anne)
+pexpr_rToDafny annK ct l (ValidExpr [x,e1,e2]) = do
+    (px,annx) <- pexprToDafny annK IsPrivate x
+    (pe1,anne1) <- pexprToDafny annK IsPrivate e1
+    (pe2,anne2) <- pexprToDafny annK IsPrivate e2
+    return (text "ValidRange" <> parens (px <> comma <> pe1 <> comma <> pe2),annx++anne1++anne2)
+    
 pexpr_rToDafny annK ct l qe@(QuantifiedExpr q args e) = error "TODO: pexpr_rToDafny quantifier"
 
 hasFunCast (isNumericType -> True) TBool = True
@@ -401,7 +412,7 @@ parens_exprToDafny annK ct i es = add 0 es
     add offset [] = return (PP.empty,[])
     add offset (e:es) = do
         (pe,anne) <- pexpr_rToDafny annK ct i $ Pcast (TWord wtot) e
-        let TWord (wordSize -> we) = infoTyNote "parens_exprToDafny" $ loc e
+        let TWord we = infoTyNote "parens_exprToDafny" $ loc e
         (pes,annes) <- add (offset+we) es
         return (shift_left pe we <+> if null es then PP.empty else (char '+') <+> pes,anne++annes)
 
@@ -417,6 +428,7 @@ peop1ToDafny :: DafnyK m => AnnKind -> CtMode -> TyInfo -> Set Piden -> Peop1 ->
 peop1ToDafny annK ct l vs Not1 e1 = nativeop1ToDafny annK ct l vs (char '!' <>) e1
 
 peop2ToDafny :: DafnyK m => AnnKind -> CtMode -> TyInfo -> Set Piden -> Peop2 -> Pexpr TyInfo -> Pexpr TyInfo -> DafnyM m (Doc,AnnsDoc)
+peop2ToDafny annK ct l vs Mod2 e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "%") e1 e2
 peop2ToDafny annK ct l vs Add2 e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "+") e1 e2
 peop2ToDafny annK ct l vs Sub2 e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "-") e1 e2
 peop2ToDafny annK ct l vs (Mul2) e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "*") e1 e2
@@ -428,19 +440,19 @@ peop2ToDafny annK ct l vs (Ge2 Unsigned) e1 e2   = nativeop2ToDafny annK ct l vs
 peop2ToDafny annK ct l vs (Gt2 Unsigned) e1 e2   = nativeop2ToDafny annK ct l vs (fop2 ">") e1 e2
 peop2ToDafny annK ct l vs (Le2 Signed) e1@(locTy -> TWord w) e2   = do
     -- x <=s y = (y - x) >> 63 == 0
-    let fop x y = parens (parens (y <+> text "-" <+> x) <+> text ">>" <+> int (wordSize w-1)) <+> text "== 0"
+    let fop x y = parens (parens (y <+> text "-" <+> x) <+> text ">>" <+> int (w-1)) <+> text "== 0"
     nativeop2ToDafny annK ct l vs fop e1 e2
 peop2ToDafny annK ct l vs (Lt2 Signed) e1@(locTy -> TWord w) e2 = do
     -- x <s y = (x - y) >> 63 == 1
-    let fop x y = parens (parens (x <+> text "-" <+> y) <+> text ">>" <+> int (wordSize w-1)) <+> text "== 1"
+    let fop x y = parens (parens (x <+> text "-" <+> y) <+> text ">>" <+> int (w-1)) <+> text "== 1"
     nativeop2ToDafny annK ct l vs fop e1 e2
 peop2ToDafny annK ct l vs (Gt2 Signed) e1@(locTy -> TWord w) e2   = do
     -- x >s y = (y - x) >> 63 == 1
-    let fop x y = parens (parens (y <+> text "-" <+> x) <+> text ">>" <+> int (wordSize w-1)) <+> text "== 1"
+    let fop x y = parens (parens (y <+> text "-" <+> x) <+> text ">>" <+> int (w-1)) <+> text "== 1"
     nativeop2ToDafny annK ct l vs fop e1 e2
 peop2ToDafny annK ct l vs (Ge2 Signed) e1@(locTy -> TWord w) e2   = do
     -- x >=s y = (x - y) >> 63 == 0
-    let fop x y = parens (parens (x <+> text "-" <+> y) <+> text ">>" <+> int (wordSize w-1)) <+> text "== 0"
+    let fop x y = parens (parens (x <+> text "-" <+> y) <+> text ">>" <+> int (w-1)) <+> text "== 0"
     nativeop2ToDafny annK ct l vs fop e1 e2
 peop2ToDafny annK ct l vs Shl2 e1 e2  = nativeop2ToDafny annK ct l vs (fop2 "<<") e1 e2
 peop2ToDafny annK ct l vs (Shr2 Unsigned) e1 e2  = nativeop2ToDafny annK ct l vs (fop2 ">>") e1 e2
@@ -505,14 +517,21 @@ instrAnn_rToDafny l (EmbedAnn isLeak e) = do
 instrAnn_rToDafny l (VarDefAnn ann) = annargToDafny False StmtK IsPrivate ann
 
 annargToDafny :: DafnyK m => Bool -> AnnKind -> CtMode -> Annarg TyInfo -> DafnyM m (Doc,AnnsDoc)
-annargToDafny isProcArg annK ct (Annarg ty v) = do
+annargToDafny isProcArg annK ct (Annarg ty v mbe) = do
     vs <- lift2 $ usedVars v
     pv <- pidentToDafny v
     (pty,annty) <- ptypeToDafny annK (Just v) (ty)
     annp <- genDafnyAssumptions annK ct vs pv (tyInfo ty)
     let pdecl = pv <+> char ':' <+> pty
     let pvar = if isProcArg then pdecl else text "var" <+> pdecl <> semicolon
-    return (pvar,annp ++ annty)
+    (pass,annsass) <- case mbe of
+        Nothing -> return (PP.empty,[])
+        Just e -> do
+            (pe,anne) <- pexprToDafny StmtK IsPrivate e
+            let pass = pv <+> text ":=" <+> pe <> semicolon;
+            let (anne',pre) = annLinesC StmtKC anne
+            return (pre $+$ pass,anne')
+    return (pvar $+$ pass,annp ++ annty ++ annsass)
 
 loopAnnsToDafny :: DafnyK m => [LoopAnnotation TyInfo] -> DafnyM m AnnsDoc
 loopAnnsToDafny xs = concatMapM loopAnnToDafny xs
@@ -579,12 +598,12 @@ pidentToDafnyId (Pident _ v) = v
 ptypeToDafny :: DafnyK m => AnnKind -> Maybe (Pident TyInfo) -> Ptype TyInfo -> DafnyM m (Doc,AnnsDoc)
 ptypeToDafny annK v TBool = return (text "bool",[])
 ptypeToDafny annK v (TInt w) = do
-    let pw = maybe PP.empty wsizeToDafny w
+    let pw = maybe PP.empty PP.int w
     return (text "int" <> pw,[])
-ptypeToDafny annK v (TWord sz) = return (text "bv" <> wsizeToDafny sz,[])
+ptypeToDafny annK v (TWord sz) = return (text "bv" <> int sz,[])
 ptypeToDafny annK v (TArray sz e) = do
     (pe,anne) <- pexprToDafny annK IsCt e
-    let pty = text "seq" <> abrackets (text "bv" <> wsizeToDafny sz)
+    let pty = text "seq" <> abrackets (text "bv" <> int sz)
     anns <- case v of
         Nothing -> return []
         Just v -> do
@@ -592,9 +611,6 @@ ptypeToDafny annK v (TArray sz e) = do
             leakMode <- getLeakMode
             annExpr (Just False) False leakMode annK (Set.singleton $ funit v) (dafnySize pv <+> text "==" <+> pe)
     return (pty,anne++anns)
-
-wsizeToDafny :: Wsize -> Doc
-wsizeToDafny w   = int (wordSize w)
 
 dafnySize :: Doc -> Doc
 dafnySize x = char '|' <> x <> char '|'

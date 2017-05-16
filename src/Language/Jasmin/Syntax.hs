@@ -58,15 +58,18 @@ instance Monad m => PP m Sign where
     pp Signed  = return $ PP.text "s"
     pp Unsigned  = return $ PP.empty
 
-isNumericPeop2 Add2 = True
-isNumericPeop2 Sub2 = True
-isNumericPeop2 (Mul2) = True
-isNumericPeop2 (Shr2 _) = True
-isNumericPeop2 Shl2 = True
-isNumericPeop2 BAnd2 = True
-isNumericPeop2 BOr2 = True
-isNumericPeop2 BXor2 = True
-isNumericPeop2 _ = False
+isLRNumericPeop2 Add2 = True
+isLRNumericPeop2 Sub2 = True
+isLRNumericPeop2 (Mul2) = True
+isLRNumericPeop2 BAnd2 = True
+isLRNumericPeop2 BOr2 = True
+isLRNumericPeop2 BXor2 = True
+isLRNumericPeop2 _ = False
+
+isLNumericPeop2 (Shr2 _) = True
+isLNumericPeop2 Shl2 = True
+isLNumericPeop2 Mod2 = True
+isLNumericPeop2 _ = False
 
 isBoolPeop2 And2 = True
 isBoolPeop2 Or2 = True
@@ -82,7 +85,7 @@ isCmpPeop2 _ = Nothing
 
 data Peop2 =
   Add2 | Sub2 | Mul2 | And2 | Or2  | BAnd2 | BOr2 | BXor2 |
-  Shr2 Sign | Shl2 | Eq2 | Neq2 | Lt2 Sign | Le2 Sign | Gt2 Sign | Ge2 Sign
+  Shr2 Sign | Shl2 | Eq2 | Neq2 | Lt2 Sign | Le2 Sign | Gt2 Sign | Ge2 Sign | Mod2
     deriving (Eq,Ord,Show,Data,Typeable,Generic)
 instance Binary Peop2
 instance Hashable Peop2
@@ -118,6 +121,7 @@ instance Monad m => PP m Peop2 where
     pp (Ge2  s)  = do
         ps <- pp s
         return $ PP.text ">=" <> ps
+    pp (Mod2) = return $ text "%"
     
 data Quantifier
     = ForallQ
@@ -146,6 +150,7 @@ data Pexpr_r info
   | PEOp2    Peop2 (Pexpr info) (Pexpr info)
   -- annotations
   | LeakExpr (Pexpr info)
+  | ValidExpr [Pexpr info]
   | QuantifiedExpr Quantifier [Annarg info] (Pexpr info)
     deriving (Eq,Ord,Show,Data,Typeable,Generic,Functor)
 instance Binary info => Binary (Pexpr_r info)
@@ -189,45 +194,16 @@ instance Monad m => PP m (Pexpr_r info) where
     pp (LeakExpr e) = do
         ppe <- pp e
         return $ text "public" <> PP.parens ppe
+    pp (ValidExpr es) = do
+        ppes <- mapM pp es
+        return $ text "valid" <> PP.parens (PP.sepBy ppes PP.comma)
     pp (QuantifiedExpr q vs e) = do
         pq <- pp q
         pp1 <- mapM pp vs
         pp2 <- pp e
         return $ pq <+> PP.sepBy pp1 PP.comma <+> char ';' <+> pp2
 
--- (* -------------------------------------------------------------------- *)
-data Wsize = W8 | W16 | W32 | W64 | W128 | W256
-    deriving (Eq,Ord,Show,Data,Typeable,Generic)
-instance Binary Wsize
-instance Hashable Wsize
-instance NFData Wsize where
-    rnf = genericRnf
-instance Monad m => PP m Wsize where
-    pp W8   = return $ PP.text "8"
-    pp W16  = return $ PP.text "16"
-    pp W32  = return $ PP.text "32"
-    pp W64  = return $ PP.text "64"
-    pp W128 = return $ PP.text "128"
-    pp W256 = return $ PP.text "256"
-
-wordSize :: Wsize -> Int
-wordSize W8 = 8
-wordSize W16 = 16
-wordSize W32 = 32
-wordSize W64 = 64
-wordSize W128 = 128
-wordSize W256 = 256
-
-sizeWord :: Int -> Maybe Wsize
-sizeWord 8   = Just W8
-sizeWord 16  = Just W16
-sizeWord 32  = Just W32
-sizeWord 64  = Just W64
-sizeWord 128 = Just W128
-sizeWord 256 = Just W256
-sizeWord n = Nothing
-
-data Ptype info = TBool | TInt (Maybe Wsize) | TWord Wsize | TArray Wsize (Pexpr info)
+data Ptype info = TBool | TInt (Maybe Int) | TWord Int | TArray Int (Pexpr info)
     deriving (Data,Eq,Ord,Show,Typeable,Generic,Functor)
 instance Binary info => Binary (Ptype info)
 instance Hashable info => Hashable (Ptype info)
@@ -511,17 +487,18 @@ instance Monad m => PP m (Pbodyarg info) where
         pn <- pp n
         return $ pty <+> pn <> PP.semicolon
 
-data Annarg info = Annarg { aa_ty :: Ptype info, aa_name :: Pident info }
+data Annarg info = Annarg { aa_ty :: Ptype info, aa_name :: Pident info, aa_init :: Maybe (Pexpr info) }
     deriving (Eq,Ord,Show,Data,Typeable,Generic,Functor)
 instance Binary info => Binary (Annarg info)
 instance Hashable info => Hashable (Annarg info)
 instance NFData info => NFData (Annarg info) where
     
 instance Monad m => PP m (Annarg info) where
-    pp (Annarg ty n) = do
+    pp (Annarg ty n e) = do
         pty <- pp ty
         pn <- pp n
-        return $ pty <+> pn
+        pe <- PP.ppOptM e $ \e -> pp e >>= \pe -> return $ text "=" <+> pe
+        return $ pty <+> pn <+> pe
 
 -- (* -------------------------------------------------------------------- *)
 data Pitem info
@@ -884,10 +861,11 @@ instance (Vars Piden m info) => Vars Piden m (Parg info) where
         return $ Parg ty' n'
 
 instance (Vars Piden m info) => Vars Piden m (Annarg info) where
-    traverseVars f (Annarg ty n) = do
+    traverseVars f (Annarg ty n e) = do
         ty' <- f ty
         n' <- inLHS False $ f n
-        return $ Annarg ty' n'
+        e' <- mapM f e
+        return $ Annarg ty' n' e'
     
 instance (Vars Piden m info) => Vars Piden m (Pbodyarg info) where
     traverseVars f (Pbodyarg ty n) = do
@@ -1001,6 +979,9 @@ instance (Vars Piden m info) => Vars Piden m (Pexpr_r info) where
     traverseVars f (LeakExpr e) = do
         e' <- f e
         return $ LeakExpr e'
+    traverseVars f (ValidExpr e) = do
+        e' <- mapM f e
+        return $ ValidExpr e'
     traverseVars f (QuantifiedExpr q args e) = do
         q' <- f q
         args' <- mapM f args
@@ -1150,8 +1131,6 @@ instance GenVar Piden m => Vars Piden m Peop1 where
 instance GenVar Piden m => Vars Piden m Peop2 where
     traverseVars f = return
 instance GenVar Piden m => Vars Piden m Op where
-    traverseVars f = return
-instance GenVar Piden m => Vars Piden m Wsize where
     traverseVars f = return
 instance GenVar Piden m => Vars Piden m Sign where
     traverseVars f = return

@@ -34,18 +34,8 @@ instance Monad m => PP m TokenInfo where
     pp = pp . tSymb
 
 data Token
-    = T_U8  
-    | T_U16 
-    | T_U32 
-    | T_U64 
-    | T_U128
-    | T_U256
-    | T_I8  
-    | T_I16 
-    | T_I32 
-    | T_I64 
-    | T_I128
-    | T_I256
+    = T_U Int  
+    | T_I Int  
     | T_BOOL
     | T_INT 
     | REG   
@@ -80,6 +70,7 @@ data Token
     | RARROW     
     | COLON      
     | UNDERSCORE 
+    | MOD
     | EQ_         
     | EQEQ       
     | BANGEQ       
@@ -118,6 +109,7 @@ data Token
     | TokenEOF  
     | TokenError
     
+    | VALID
     | FREE
     | LEAKAGE
     | PUBLIC
@@ -136,18 +128,8 @@ data Token
   deriving (Eq,Ord,Read,Show,Data,Typeable)
 
 instance Monad m => PP m Token where
-    pp T_U8     = return $ text "u8"
-    pp T_U16    = return $ text "u16"
-    pp T_U32    = return $ text "u32"
-    pp T_U64    = return $ text "u64"
-    pp T_U128   = return $ text "u128"
-    pp T_U256   = return $ text "u256"
-    pp T_I8     = return $ text "int8"
-    pp T_I16    = return $ text "int16"
-    pp T_I32    = return $ text "int32"
-    pp T_I64    = return $ text "int64"
-    pp T_I128   = return $ text "int128"
-    pp T_I256   = return $ text "int256"
+    pp (T_U i)     = return $ text "u" <> int i
+    pp (T_I i)    = return $ text "int" <> int i
     pp T_BOOL   = return $ text "bool"
     pp T_INT    = return $ text "int"
     pp REG      = return $ text "reg"
@@ -182,6 +164,7 @@ instance Monad m => PP m Token where
     pp RARROW      = return $ text "->"  
     pp COLON       = return $ text ":"   
     pp UNDERSCORE  = return $ text "_"   
+    pp MOD         = return $ text "%"
     pp EQ_         = return $ text "="   
     pp EQEQ        = return $ text "=="  
     pp BANGEQ        = return $ text "!="  
@@ -221,6 +204,7 @@ instance Monad m => PP m Token where
     pp TokenError =             return $ text "error <unknown>"
     
     pp FREE              = return $ text "free"
+    pp VALID              = return $ text "valid"
     pp LEAKAGE           = return $ text "leakage"
     pp PUBLIC            = return $ text "public"
     pp FUNCTION          = return $ text "function"

@@ -34,7 +34,7 @@ tt_as_array :: TcK m => Position -> Ptype TyInfo -> TcM m (Ptype TyInfo)
 tt_as_array l (TArray ws _) = return $ TWord ws
 tt_as_array l ty = tyError l $ InvalidType (ty) TPArray
 
-tt_as_word :: TcK m => Position -> Ptype TyInfo -> TcM m Wsize
+tt_as_word :: TcK m => Position -> Ptype TyInfo -> TcM m Int
 tt_as_word l (TWord ws) = return ws
 tt_as_word l ty = tyError l $ InvalidType (ty) TPWord
 
@@ -49,14 +49,17 @@ peop2_of_eqop BAndEq = Just BAnd2
 peop2_of_eqop BXOrEq = Just BXor2
 peop2_of_eqop BOrEq  = Just BOr2
 
-max_ty :: TcK m => JasminError -> Ptype info -> Ptype info -> TcM m (Ptype info)
-max_ty err (TInt Nothing) (TInt Nothing) = return (TInt Nothing)
-max_ty err t1@(TInt (Just w)) (TInt Nothing) = return t1
-max_ty err (TInt Nothing) t2@(TInt (Just w)) = return t2
-max_ty err (TInt Nothing) t2@(TWord _) = return t2
-max_ty err t1@(TWord _) (TInt Nothing) = return t1
-max_ty err t1@(TWord w1) (TWord w2) | w1 == w2 = return t1
-max_ty err _ _ = throwError err
+max_ty :: TcK m => Position -> JasminError -> Ptype info -> Ptype info -> TcM m (Ptype info)
+max_ty p err (TInt Nothing) (TInt Nothing) = return (TInt Nothing)
+max_ty p err t1@(TInt (Just w)) (TInt Nothing) = return t1
+max_ty p err (TInt Nothing) t2@(TInt (Just w)) = return t2
+max_ty p err (TInt Nothing) t2@(TWord _) = return t2
+max_ty p err t1@(TWord _) (TInt Nothing) = return t1
+max_ty p err t1@(TWord w1) (TWord w2) | w1 == w2 = return t1
+max_ty p err t1 t2 = do
+    p1 <- pp t1
+    p2 <- pp t2
+    throwError $ GenericError p (text "max_ty" <+> p1 <+> p2) (Just err)
 
 cast_pexpr :: TcK m => Pexpr TyInfo -> Ptype TyInfo -> TcM m (Pexpr TyInfo)
 cast_pexpr e ty = do
@@ -66,6 +69,8 @@ cast_pexpr e ty = do
         cast' (TInt Nothing) (TInt (Just w)) = return $ Pexpr (tyInfo $ TInt $ Just w) (Pcast (TInt $ Just w) e)
         cast' (TInt Nothing) (TWord w) = return $ Pexpr (tyInfo $ TWord w) (Pcast (TWord w) e)
         cast' (TWord w1) (TWord w2) | w1 == w2 = return e
+        cast' (TWord w1) (TWord w2) | w1 < w2 = return $ Pexpr (tyInfo $ TWord w2) $ Pcast (TWord w2) e
+        cast' (isNumericType -> True) (TInt Nothing) = return $ Pexpr (tyInfo $ TInt Nothing) $ Pcast (TInt Nothing) e
         cast' ety ty = tyError eloc $ InvalidCast ety ty
     cast' ety ty
 
@@ -74,21 +79,17 @@ tt_op2 l op e1 e2 = do
     let ty1 = infoTyNote "tt_op2" $ loc e1
     let ty2 = infoTyNote "tt_op2" $ loc e2
     case (op,ty1,ty2) of
-        (isNumericPeop2 -> True,isNumericType -> True,isNumericType -> True) -> do
-            ty <- max_ty (TypeCheckerError l $ InvOpInExpr op) ty1 ty2
+        (isLNumericPeop2 -> True,isNumericType -> True,isNumericType -> True) -> do
+            e2' <- cast_pexpr e2 $ TInt Nothing
+            return (PEOp2 op e1 e2',locTy e1)
+        (isLRNumericPeop2 -> True,isNumericType -> True,isNumericType -> True) -> do
+            ty <- max_ty l (TypeCheckerError l $ InvOpInExpr op) ty1 ty2
             e1' <- cast_pexpr e1 ty
             e2' <- cast_pexpr e2 ty
-            --case wordSizePeop2 op of
-            --    Just w -> do
-            --        let tw = TWord w
-            --        let e1'' = Pexpr (tyInfoLoc tw l) $ Pcast (TWord w) e1'
-            --        let e2'' = Pexpr (tyInfoLoc tw l) $ Pcast (TWord w) e2'
-             --       return (PEOp2 op e1'' e2'',tw)
-            --    Nothing ->
             return (PEOp2 op e1' e2',ty)
         (isBoolPeop2 -> True,TBool,TBool) -> return (PEOp2 op e1 e2,TBool)
         (isCmpPeop2 -> Just _,ty1,ty2) -> do
-            ty <- max_ty (TypeCheckerError l $ InvOpInExpr op) ty1 ty2
+            ty <- max_ty l (TypeCheckerError l $ InvOpInExpr op) ty1 ty2
             e1' <- cast_pexpr e1 ty
             e2' <- cast_pexpr e2 ty
             return (PEOp2 op e1' e2',TBool)
@@ -103,11 +104,9 @@ tt_concat_types :: TcK m => Position -> [Ptype TyInfo] -> TcM m (Ptype TyInfo)
 tt_concat_types p [] = genError p $ text "cannot concat empty types"
 tt_concat_types p [x] = return x
 tt_concat_types p xs = do
-    ws <- mapM (liftM wordSize . tt_as_word p) xs
+    ws <- mapM (tt_as_word p) xs
     let w = sum ws
-    case sizeWord w of
-        Just wsz -> return $ TWord wsz
-        Nothing -> genError p $ text "concat needs to be a word type, not" <+> ppid w
+    return $ TWord w
 
 tt_expr_r :: TcK m => Position -> Pexpr_r Position -> TcM m (Pexpr_r TyInfo,Ptype TyInfo)
 tt_expr_r l (PEParens e) = do
@@ -127,7 +126,7 @@ tt_expr_r l (PEFetch ct x o) = do
     o' <- tt_index o
     ct' <- mapM tt_type ct
     ct'' <- case ct' of
-        Nothing -> return $ TWord W64
+        Nothing -> return $ TWord 64
         Just st -> do
             sty <- tt_as_word l st
             if sty < w
@@ -150,6 +149,10 @@ tt_expr_r l (PEOp2 pop pe1 pe2) = do
 tt_expr_r l (LeakExpr e) = checkAnn l (Just True) $ do
     e' <- tt_expr e
     return (LeakExpr e',TBool)
+tt_expr_r l (ValidExpr (x:es)) = checkAnn l (Just False) $ do
+    x' <- tt_expr x
+    es' <- mapM tt_index es
+    return (ValidExpr (x':es'),TBool)
 tt_expr_r l qe@(QuantifiedExpr q vs e) = checkAnn l (Just False) $ tt_local $ do
     vs' <- mapM tt_annarg vs
     e' <- tt_bool e
@@ -163,23 +166,22 @@ tt_type :: TcK m => Ptype Position -> TcM m (Ptype TyInfo)
 tt_type TBool = return TBool
 tt_type (TInt w) = return $ TInt w
 tt_type (TWord ws) = do
-    ws' <- tt_ws ws
-    return $ TWord ws'
+    return $ TWord ws
 tt_type (TArray ws e) = do
-    ws' <- tt_ws ws
     e' <- tt_expr e
-    return $ TArray ws' e'
-
-tt_ws :: TcK m => Wsize -> TcM m Wsize
-tt_ws w = return w
+    return $ TArray ws e'
 
 tt_annarg :: TcK m => Annarg Position -> TcM m (Annarg TyInfo)
-tt_annarg (Annarg t v@(Pident l n)) = do
+tt_annarg (Annarg t v@(Pident l n) e) = do
     t' <- tt_type t
     let info = tyInfoLoc t' l
     let v' = Pident info n
     addVar v'
-    return (Annarg t' v')
+    e' <- forM e $ \e -> do
+        e' <- tt_expr e
+        e'' <- check_ty_assign l e' t'
+        return e''
+    return (Annarg t' v' e')
     
 tt_vardecl :: TcK m => Pbodyarg Position -> TcM m (Pbodyarg TyInfo)
 tt_vardecl (Pbodyarg t v) = do
@@ -325,14 +327,6 @@ check_index p (TInt Nothing) = return ()
 check_index p (TWord _) = return ()
 check_index p t = tyError p $ TypeMismatch t (TInt Nothing)
 
---assign_index :: TcK m => Pexpr TyInfo -> TcM m (Pexpr TyInfo)
---assign_index x' = do
---    let p = infoLoc $ loc x'
---    case locTy x' of
---        TInt -> return x'
---        TWord w -> return $ Pexpr (tyInfoLoc TInt p) $ Pcast TInt x'
---        t -> tyError p $ TypeMismatch t TInt
-
 tt_int :: TcK m => Pexpr Position -> TcM m (Pexpr TyInfo)
 tt_int x = expect (loc x) TPInt (infoTyNote "tt_int" . loc) (tt_expr x)
 
@@ -365,7 +359,8 @@ tt_instr_r p (PIWhile s1 c anns s2) = do
     anns' <- mapM tt_loop_ann anns
     s2' <- mapM tt_block s2
     return $ PIWhile s1' c' anns' s2'
-tt_instr_r p (PIAssign ls eqop e (Just c)) = tt_instr_r p $ PIIf True c (Pblock p [Pinstr p $ PIAssign ls eqop e Nothing]) Nothing
+tt_instr_r p (PIAssign ls eqop e (Just c)) = do
+    tt_instr_r p $ PIIf True c (Pblock p [Pinstr p $ PIAssign ls eqop e Nothing]) Nothing
 tt_instr_r p (PIAssign ls (peop2_of_eqop -> Just o) re Nothing) = do
     lve <- tt_expr_of_lvalues p ls
     let re' = Pexpr (loc re) $ PEOp2 o lve re
@@ -461,7 +456,7 @@ tt_mul128_op p ls@[lx,ly] (binOp2 -> Just (Mul2,ex,ey)) = do
     ls'@[lx',ly'] <- tt_lwords' ls
     tx'@(TWord wx) <- locTyM lx'
     ty'@(TWord wy) <- locTyM ly'
-    let txy = TWord (fromJust $ sizeWord $ wordSize wx + wordSize wy)
+    let txy = TWord (wx + wy)
     let ixy = tyInfoLoc txy p
     ex' <- expr_ty_assign p ex tx'
     ey' <- expr_ty_assign p ey ty'
@@ -546,7 +541,7 @@ tt_program (Pprogram pm) = liftM Pprogram $ mapM tt_item pm
 
 -- * State
 
-type TcK m = Monad m
+type TcK m = MonadIO m
 type TcM m = StateT TcEnv (ExceptT JasminError m)
 
 data TcEnv = TcEnv
@@ -798,7 +793,7 @@ check_lvalue_ty t1 lv@(Plvalue ilv lvr) = do
         ws <- mapM (tt_as_word p) tys
         if length ws >= pred (length etys)
             then do
-                let tgap = TWord $ fromJust $ sizeWord $ wordSize wtot - sum (map wordSize ws)
+                let tgap = TWord $ wtot - sum ws
                 es' <- forM es $ \e -> case locTy' e of
                     Just _ -> return e
                     Nothing -> check_lvalue_ty tgap e

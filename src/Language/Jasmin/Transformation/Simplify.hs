@@ -97,10 +97,11 @@ simplifyParg (Parg ty n) = do
     return $ Parg ty' n'
 
 simplifyAnnarg :: SimplifyK m => Annarg TyInfo -> SimplifyM m (Annarg TyInfo)
-simplifyAnnarg (Annarg ty n) = do
+simplifyAnnarg (Annarg ty n e) = do
     ty' <- simplifyPtype ty
     n' <- simplifyPident n
-    return $ Annarg ty' n'
+    e' <- mapM simplifyPexpr e
+    return $ Annarg ty' n' e'
 
 simplifyPbodyarg :: SimplifyK m => Pbodyarg TyInfo -> SimplifyM m (Pbodyarg TyInfo)
 simplifyPbodyarg (Pbodyarg ty n) = do
@@ -292,6 +293,9 @@ simplifyPexpr_r (PEOp2 o e1 e2) = do
 simplifyPexpr_r (LeakExpr e) = do
     e' <- simplifyPexpr e
     return $ LeakExpr e'
+simplifyPexpr_r (ValidExpr e) = do
+    e' <- mapM simplifyPexpr e
+    return $ ValidExpr e'
 
 simplifyPstotype :: SimplifyK m => Pstotype TyInfo -> SimplifyM m (Pstotype TyInfo)
 simplifyPstotype (sto,ty) = do
@@ -389,7 +393,7 @@ loopAnn_r2StmtAnn_r l (LDecreasesAnn isFree e) = do
     let ie = loc e
     c@(Pident () n) <- lift2 $ mkNewVar "cond"
     let c' = Pident ie n
-    let def = StatementAnnotation l $ VarDefAnn $ Annarg (locTy e) c'
+    let def = StatementAnnotation l $ VarDefAnn $ Annarg (locTy e) c' Nothing
     let ass = StatementAnnotation l $ EmbedAnn False $ Pinstr l $ PIAssign [varPlvalue c'] RawEq e Nothing
     let cons = if isFree then AssumeAnn else AssertAnn
     let assert = StatementAnnotation l $ cons False $ Pexpr (tyInfoLoc TBool p) $ PEOp2 (Le2 Unsigned) e (varPexpr c')

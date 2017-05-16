@@ -126,7 +126,7 @@ instance GenVar Piden IO where
         let n' = n++"_"++show (hashUnique u)
         return $ Pident i n'
 
-locWordTy :: (Located a,LocOf a ~ TyInfo) => a -> Maybe Wsize
+locWordTy :: (Located a,LocOf a ~ TyInfo) => a -> Maybe Int
 locWordTy = join . fmap wordTy . locTy'
 
 locNumericTy :: (Located a,LocOf a ~ TyInfo) => a -> Bool
