@@ -52,7 +52,7 @@ simplifyPitem (PAnnfunctiondef f) = liftM (Left . PAnnfunctiondef) $ simplifyPAn
 
 simplifyPAnnAxiomDef :: SimplifyK m => AnnAxiomDeclaration TyInfo -> SimplifyM m (AnnAxiomDeclaration TyInfo)
 simplifyPAnnAxiomDef (AnnAxiomDeclaration isLeak args anns i) = do
-    args' <- mapM simplifyAnnarg args
+    args' <- mapM (simplifyPure simplifyAnnarg) args
     anns' <- mapM simplifyProcAnn anns
     i' <- simplifyTyInfo i
     return $ AnnAxiomDeclaration isLeak args' anns' i'
@@ -60,7 +60,7 @@ simplifyPAnnAxiomDef (AnnAxiomDeclaration isLeak args anns i) = do
 simplifyPAnnLemmaDef :: SimplifyK m => AnnLemmaDeclaration TyInfo -> SimplifyM m (AnnLemmaDeclaration TyInfo)
 simplifyPAnnLemmaDef (AnnLemmaDeclaration isLeak n args anns body i) = do
     n' <- simplifyPident n
-    args' <- mapM simplifyAnnarg args
+    args' <- mapM (simplifyPure simplifyAnnarg) args
     anns' <- mapM simplifyProcAnn anns
     body' <- mapM simplifyPblock body
     i' <- simplifyTyInfo i
@@ -68,11 +68,11 @@ simplifyPAnnLemmaDef (AnnLemmaDeclaration isLeak n args anns body i) = do
 
 simplifyPAnnFunDef :: SimplifyK m => AnnFunDeclaration TyInfo -> SimplifyM m (AnnFunDeclaration TyInfo)
 simplifyPAnnFunDef (AnnFunDeclaration isLeak ret n args anns body i) = do
-    ret' <- simplifyPtype ret
+    ret' <- simplifyPure simplifyPtype ret
     n' <- simplifyPident n
-    args' <- mapM simplifyAnnarg args
+    args' <- mapM (simplifyPure simplifyAnnarg) args
     anns' <- mapM simplifyProcAnn anns
-    body' <- simplifyPexpr body
+    body' <- simplifyPure simplifyPexpr body
     i' <- simplifyTyInfo i
     return $ AnnFunDeclaration isLeak ret' n' args' anns' body' i'
 
@@ -84,7 +84,7 @@ simplifyPfundef :: SimplifyK m => Pfundef TyInfo -> SimplifyM m (Pfundef TyInfo)
 simplifyPfundef (Pfundef cc n args rty ann body info) = do
     n' <- simplifyPident n
     args' <- mapM simplifyParg args
-    rty' <- mapM (mapM simplifyPstotype) rty
+    rty' <- mapM (mapM (simplifyPure simplifyPstotype)) rty
     ann' <- mapM simplifyProcAnn ann
     body' <- simplifyPfunbody body
     info' <- simplifyTyInfo info
@@ -92,20 +92,20 @@ simplifyPfundef (Pfundef cc n args rty ann body info) = do
 
 simplifyParg :: SimplifyK m => Parg TyInfo -> SimplifyM m (Parg TyInfo)
 simplifyParg (Parg ty n) = do
-    ty' <- simplifyPstotype ty
+    ty' <- simplifyPure simplifyPstotype ty
     n' <- mapM simplifyPident n
     return $ Parg ty' n'
 
-simplifyAnnarg :: SimplifyK m => Annarg TyInfo -> SimplifyM m (Annarg TyInfo)
-simplifyAnnarg (Annarg ty n e) = do
-    ty' <- simplifyPtype ty
+simplifyAnnarg :: SimplifyK m => Bool -> Annarg TyInfo -> SimplifyM m ([Pinstr TyInfo],Annarg TyInfo)
+simplifyAnnarg isPure (Annarg ty n e) = do
+    (ssty,ty') <- simplifyPtype isPure ty
     n' <- simplifyPident n
-    e' <- mapM simplifyPexpr e
-    return $ Annarg ty' n' e'
+    (concat -> sse,e') <- Utils.mapAndUnzipM (simplifyPexpr isPure) e
+    return (ssty++sse,Annarg ty' n' e')
 
 simplifyPbodyarg :: SimplifyK m => Pbodyarg TyInfo -> SimplifyM m (Pbodyarg TyInfo)
 simplifyPbodyarg (Pbodyarg ty n) = do
-    ty' <- simplifyPstotype ty
+    ty' <- simplifyPure simplifyPstotype ty
     n' <- simplifyPident n
     return $ Pbodyarg ty' n'
 
@@ -134,13 +134,13 @@ simplifyProcAnn (ProcedureAnnotation l x) = do
 
 simplifyProcAnn_r :: SimplifyK m => ProcedureAnnotation_r TyInfo -> SimplifyM m (ProcedureAnnotation_r TyInfo)
 simplifyProcAnn_r (RequiresAnn isFree isLeak e) = do
-    e' <- simplifyPexpr e
+    e' <- simplifyPure simplifyPexpr e
     return (RequiresAnn isFree isLeak e')
 simplifyProcAnn_r (EnsuresAnn isFree isLeak e) = do
-    e' <- simplifyPexpr e
+    e' <- simplifyPure simplifyPexpr e
     return (EnsuresAnn isFree isLeak e')
 simplifyProcAnn_r (PDecreasesAnn e) = do
-    e' <- simplifyPexpr e
+    e' <- simplifyPure simplifyPexpr e
     return (PDecreasesAnn e')
 
 simplifyStatementAnn :: SimplifyK m => StatementAnnotation TyInfo -> SimplifyM m [StatementAnnotation TyInfo]
@@ -151,17 +151,17 @@ simplifyStatementAnn (StatementAnnotation l x) = do
 
 simplifyStatementAnn_r :: SimplifyK m => StatementAnnotation_r TyInfo -> SimplifyM m [StatementAnnotation_r TyInfo]
 simplifyStatementAnn_r (AssumeAnn isLeak e) = do
-    e' <- simplifyPexpr e
-    return [AssumeAnn isLeak e']
+    (ss,e') <- simplifyPexpr False e
+    return $ map (EmbedAnn isLeak) ss ++ [AssumeAnn isLeak e']
 simplifyStatementAnn_r (AssertAnn isLeak e) = do
-    e' <- simplifyPexpr e
-    return [AssertAnn isLeak e']
+    (ss,e') <- simplifyPexpr False e
+    return $ map (EmbedAnn isLeak) ss ++ [AssertAnn isLeak e']
 simplifyStatementAnn_r (EmbedAnn isLeak e) = do
     e' <- simplifyPinstr e
     return $ map (EmbedAnn isLeak) e'
 simplifyStatementAnn_r (VarDefAnn ann) = do
-    ann' <- simplifyAnnarg ann
-    return [VarDefAnn ann']
+    (ss,ann') <- simplifyAnnarg False ann
+    return $ map (EmbedAnn False) ss ++ [VarDefAnn ann']
 
 simplifyLoopAnn :: SimplifyK m => LoopAnnotation TyInfo -> SimplifyM m (LoopAnnotation TyInfo)
 simplifyLoopAnn (LoopAnnotation l x) = do
@@ -171,10 +171,10 @@ simplifyLoopAnn (LoopAnnotation l x) = do
 
 simplifyLoopAnn_r :: SimplifyK m => LoopAnnotation_r TyInfo -> SimplifyM m (LoopAnnotation_r TyInfo)
 simplifyLoopAnn_r (LDecreasesAnn isFree e) = do
-    e' <- simplifyPexpr e
+    e' <- simplifyPure simplifyPexpr e
     return (LDecreasesAnn isFree e')
 simplifyLoopAnn_r (LInvariantAnn isFree isLeak e) = do
-    e' <- simplifyPexpr e
+    e' <- simplifyPure simplifyPexpr e
     return (LInvariantAnn isFree isLeak e')
 
 simplifyPinstr_r :: SimplifyK m => TyInfo -> Pinstr_r TyInfo -> SimplifyM m [Pinstr TyInfo]
@@ -204,30 +204,30 @@ simplifyPinstr_r i (PIWhile (Just b@(Pblock _ is)) c anns Nothing) = do
     (ianns1,ianns2) <- Utils.mapAndUnzipM loopAnn2StmtAnn anns
     concatMapM simplifyPinstr (concat ianns1 ++ is ++ concat ianns2 ++ [Pinstr i $ PIWhile Nothing c anns (Just b)])
 simplifyPinstr_r i (PIWhile Nothing c ann (Just b)) = do
-    c' <- simplifyPexpr c
+    c' <- simplifyPure simplifyPexpr c
     b' <- simplifyPblock b
     ann' <- mapM simplifyLoopAnn ann
     return [Pinstr i $ PIWhile Nothing c' ann' (Just b')]
 simplifyPinstr_r i (Copn lvs o es) = do
-    lvs' <- mapM simplifyPlvalue lvs
+    (concat -> sslv,lvs') <- Utils.mapAndUnzipM simplifyPlvalue lvs
     o' <- simplifyOp o
-    es' <- mapM simplifyPexpr es
-    return [Pinstr i $ Copn lvs' o' es']
+    (concat -> sse,es') <- Utils.mapAndUnzipM (simplifyPexpr False) es
+    return $ sse ++ sslv ++ [Pinstr i $ Copn lvs' o' es']
 simplifyPinstr_r i (Ccall lvs n es) = do
-    lvs' <- mapM simplifyPlvalue lvs
+    (concat -> sslv,lvs') <- Utils.mapAndUnzipM simplifyPlvalue lvs
     n' <- simplifyPident n
-    es' <- mapM simplifyPexpr es
-    return [Pinstr i $ Ccall lvs' n' es']
+    (concat -> sse,es') <- Utils.mapAndUnzipM (simplifyPexpr False) es
+    return $ sse ++ sslv ++ [Pinstr i $ Ccall lvs' n' es']
 simplifyPinstr_r i (PIIf isPrivate c b1 b2) = do
-    c' <- simplifyPexpr c
+    (ssc,c') <- simplifyPexpr False c
     b1' <- simplifyPblock b1
     b2' <- mapM simplifyPblock b2
-    return [Pinstr i $ PIIf isPrivate c' b1' b2']
+    return $ ssc ++ [Pinstr i $ PIIf isPrivate c' b1' b2']
 simplifyPinstr_r i (PIAssign lvs o re Nothing) = do
-    lvs' <- mapM simplifyPlvalue lvs
+    (concat -> sslvs,lvs') <- Utils.mapAndUnzipM simplifyPlvalue lvs
     o' <- simplifyPeqop o
-    re' <- simplifyPexpr re
-    return [Pinstr i $ PIAssign lvs' o' re' Nothing]
+    (sse,re') <- simplifyPexpr False re
+    return $ sse ++ sslvs ++ [Pinstr i $ PIAssign lvs' o' re' Nothing]
 simplifyPinstr_r i (Anninstr x) = do
     x' <- simplifyStatementAnn_r x
     return $ map (Pinstr i . Anninstr) x'
@@ -250,93 +250,98 @@ simplifyPblock (Pblock i is) = do
     is' <- concatMapM simplifyPinstr is
     return $ Pblock i' is'
 
-simplifyPexpr :: SimplifyK m => Pexpr TyInfo -> SimplifyM m ([Pinstr TyInfo],Pexpr TyInfo)
-simplifyPexpr (Pexpr i e) = do
+simplifyPexpr :: SimplifyK m => Bool -> Pexpr TyInfo -> SimplifyM m ([Pinstr TyInfo],Pexpr TyInfo)
+simplifyPexpr isPure (Pexpr i e) = do
     i' <- simplifyTyInfo i
-    (ss,e') <- simplifyPexpr_r e
+    (ss,e') <- simplifyPexpr_r isPure e
     return (ss,Pexpr i' e')
 
-simplifyPexpr_r :: SimplifyK m => Pexpr_r TyInfo -> SimplifyM m ([Pinstr TyInfo],Pexpr_r TyInfo)
-simplifyPexpr_r (PEParens es) = do
-    (concat -> ss,es') <- Utils.mapAndUnzipM simplifyPexpr es
+simplifyPexpr_r :: SimplifyK m => Bool -> Pexpr_r TyInfo -> SimplifyM m ([Pinstr TyInfo],Pexpr_r TyInfo)
+simplifyPexpr_r isPure (PEParens es) = do
+    (concat -> ss,es') <- Utils.mapAndUnzipM (simplifyPexpr isPure) es
     return (ss,PEParens es')
-simplifyPexpr_r (PEVar n) = do
+simplifyPexpr_r isPure (PEVar n) = do
     n' <- simplifyPident n
-    return $ PEVar n'
-simplifyPexpr_r (PEGet n e) = do
+    return ([],PEVar n')
+simplifyPexpr_r isPure (PEGet n e) = do
     n' <- simplifyPident n
-    (ss,e') <- simplifyPexpr e
+    (ss,e') <- simplifyPexpr isPure e
     return (ss,PEGet n' e')
-simplifyPexpr_r (PEFetch t n e) = do
-    t' <- mapM simplifyPtype t
+simplifyPexpr_r isPure (PEFetch t n e) = do
+    (concat -> ss1,t') <- Utils.mapAndUnzipM (simplifyPtype isPure) t
     n' <- simplifyPident n
-    e' <- simplifyPexpr e
-    return $ PEFetch t' n' e'
-simplifyPexpr_r (PEBool b) = return $ PEBool b
-simplifyPexpr_r (Pcast w e) = do
-    e' <- simplifyPexpr e
-    return $ Pcast w e'
-simplifyPexpr_r (PEInt i) = return $ PEInt i
-simplifyPexpr_r (PECall n es) = do
+    (ss2,e') <- simplifyPexpr isPure e
+    return (ss1++ss2,PEFetch t' n' e')
+simplifyPexpr_r isPure (PEBool b) = return ([],PEBool b)
+simplifyPexpr_r isPure (Pcast w e) = do
+    (ss,e') <- simplifyPexpr isPure e
+    return (ss,Pcast w e')
+simplifyPexpr_r isPure (PEInt i) = return ([],PEInt i)
+simplifyPexpr_r isPure (PECall n es) = do
     n' <- simplifyPident n
-    es' <- mapM simplifyPexpr es
-    return $ PECall n' es'
-simplifyPexpr_r (PEOp1 o e) = do
+    (concat -> ss,es') <- Utils.mapAndUnzipM (simplifyPexpr isPure) es
+    return (ss,PECall n' es')
+simplifyPexpr_r isPure (PEOp1 o e) = do
     o' <- simplifyPeop1 o
-    e' <- simplifyPexpr e
-    return $ PEOp1 o' e'
-simplifyPexpr_r (PEOp2 o e1 e2) = do
+    (ss,e') <- simplifyPexpr isPure e
+    return (ss,PEOp1 o' e')
+simplifyPexpr_r isPure (PEOp2 o e1 e2) = do
     o' <- simplifyPeop2 o
-    e1' <- simplifyPexpr e1
-    e2' <- simplifyPexpr e2
-    return $ PEOp2 o' e1' e2'
-simplifyPexpr_r (LeakExpr e) = do
-    e' <- simplifyPexpr e
-    return $ LeakExpr e'
-simplifyPexpr_r (ValidExpr e) = do
-    e' <- mapM simplifyPexpr e
-    return $ ValidExpr e'
+    (ss1,e1') <- simplifyPexpr isPure e1
+    (ss2,e2') <- simplifyPexpr isPure e2
+    return (ss1++ss2,PEOp2 o' e1' e2')
+simplifyPexpr_r isPure (LeakExpr e) = do
+    (ss,e') <- simplifyPexpr isPure e
+    return (ss,LeakExpr e')
+simplifyPexpr_r isPure (ValidExpr e) = do
+    (concat -> ss,e') <- Utils.mapAndUnzipM (simplifyPexpr isPure) e
+    return (ss,ValidExpr e')
 
-simplifyPstotype :: SimplifyK m => Pstotype TyInfo -> SimplifyM m (Pstotype TyInfo)
-simplifyPstotype (sto,ty) = do
-    ty' <- simplifyPtype ty
-    return (sto,ty')
+simplifyPstotype :: SimplifyK m => Bool -> Pstotype TyInfo -> SimplifyM m ([Pinstr TyInfo],Pstotype TyInfo)
+simplifyPstotype isPure (sto,ty) = do
+    (ss,ty') <- simplifyPtype isPure ty
+    return (ss,(sto,ty'))
 
-simplifyPtype :: SimplifyK m => Ptype TyInfo -> SimplifyM m (Ptype TyInfo)
-simplifyPtype TBool = return TBool
-simplifyPtype (TInt w) = return $ TInt w
-simplifyPtype (TWord w) = return $ TWord w
-simplifyPtype (TArray w e) = do
-    e' <- simplifyPexpr e
-    return $ TArray w e'
+simplifyPure :: SimplifyK m => (Bool -> a -> SimplifyM m ([Pinstr TyInfo],a)) -> a -> SimplifyM m a
+simplifyPure f x = do
+    ([],x') <- f True x
+    return x'
 
-simplifyPlvalue :: SimplifyK m => Plvalue TyInfo -> SimplifyM m (Plvalue TyInfo)
+simplifyPtype :: SimplifyK m => Bool -> Ptype TyInfo -> SimplifyM m ([Pinstr TyInfo],Ptype TyInfo)
+simplifyPtype isPure TBool = return ([],TBool)
+simplifyPtype isPure (TInt w) = return ([],TInt w)
+simplifyPtype isPure (TWord w) = return ([],TWord w)
+simplifyPtype isPure (TArray w e) = do
+    (ss,e') <- simplifyPexpr isPure e
+    return (ss,TArray w e')
+
+simplifyPlvalue :: SimplifyK m => Plvalue TyInfo -> SimplifyM m ([Pinstr TyInfo],Plvalue TyInfo)
 simplifyPlvalue (Plvalue i x) = do
     i' <- simplifyTyInfo i
-    x' <- simplifyPlvalue_r x
-    return $ Plvalue i' x'
+    (ss,x') <- simplifyPlvalue_r x
+    return (ss,Plvalue i' x')
 
-simplifyPlvalue_r :: SimplifyK m => Plvalue_r TyInfo -> SimplifyM m (Plvalue_r TyInfo)
-simplifyPlvalue_r PLIgnore = return PLIgnore
+simplifyPlvalue_r :: SimplifyK m => Plvalue_r TyInfo -> SimplifyM m ([Pinstr TyInfo],Plvalue_r TyInfo)
+simplifyPlvalue_r PLIgnore = return ([],PLIgnore)
 simplifyPlvalue_r (PLVar n) = do
     n' <- simplifyPident n
-    return $ PLVar n'
+    return ([],PLVar n')
 simplifyPlvalue_r (PLArray n e) = do
     n' <- simplifyPident n
-    e' <- simplifyPexpr e
-    return $ PLArray n' e'
+    (ss,e') <- simplifyPexpr False e
+    return (ss,PLArray n' e')
 simplifyPlvalue_r (PLMem t n e) = do
-    t' <- mapM simplifyPtype t
+    (concat -> ss1,t') <- Utils.mapAndUnzipM (simplifyPtype False) t
     n' <- simplifyPident n
-    e' <- simplifyPexpr e
-    return $ PLMem t' n' e'
+    (ss2,e') <- simplifyPexpr False e
+    return (ss1++ss2,PLMem t' n' e')
 simplifyPlvalue_r (PLParens lvs) = do
-    lvs' <- mapM simplifyPlvalue lvs
-    return $ PLParens lvs'
+    (concat -> ss,lvs') <- Utils.mapAndUnzipM simplifyPlvalue lvs
+    return (ss,PLParens lvs')
 
 simplifyTyInfo :: SimplifyK m => TyInfo -> SimplifyM m TyInfo
 simplifyTyInfo (TyInfo sto ty dec p) = do
-    ty' <- mapM simplifyPtype ty
+    ty' <- mapM (simplifyPure simplifyPtype) ty
     dec' <- mapM simplifyDecClass dec
     return $ TyInfo sto ty' dec' p
 
