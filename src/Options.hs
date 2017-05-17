@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable, DeriveGeneric #-}
+{-# LANGUAGE DeriveDataTypeable, DeriveGeneric, StandaloneDeriving #-}
 
 module Options where
     
@@ -9,6 +9,7 @@ import Data.Hashable
 import Data.Generics hiding (Generic)
 import GHC.Generics (Generic)
 import Data.Binary
+import qualified Data.SBV as SBV
 
 import Paths_jasminv
 import Data.Version (showVersion)
@@ -29,10 +30,22 @@ data Options
         , typecheck             :: Bool
         , verify                :: Maybe VerifyOpt
         , verificationTimeOut   :: Int
+        , solver                :: Maybe SBV.Solver
         }
     deriving (Show, Data, Typeable,Generic)
 instance Binary Options
 instance Hashable Options
+
+deriving instance Data SBV.Solver
+deriving instance Typeable SBV.Solver
+deriving instance Generic SBV.Solver
+instance Binary SBV.Solver
+instance Hashable SBV.Solver
+
+joinSolver Nothing y = y
+joinSolver x Nothing = x
+joinSolver x y = y
+    
 
 instance Monoid Options where
     mempty = Opts
@@ -44,6 +57,7 @@ instance Monoid Options where
         , typecheck = True
         , verify = Nothing
         , verificationTimeOut = 60
+        , solver = Nothing
         }
     mappend x y = Opts
         { inputs = inputs x ++ inputs y
@@ -54,13 +68,14 @@ instance Monoid Options where
         , typecheck = typecheck x && typecheck y
         , verify = verify x `joinVerifyOpts` verify y
         , verificationTimeOut = max (verificationTimeOut x) (verificationTimeOut y)
+        , solver = joinSolver (solver x) (solver y)
         }
 
 joinVerifyOpts Nothing y = y
 joinVerifyOpts x Nothing = x
 joinVerifyOpts (Just x) (Just y) = Just $ x `mappend` y
 
-data VerifyOpt = NoneV | FuncV | LeakV | BothV
+data VerifyOpt = NoneV | FuncV | LeakV | BothV | SmtV
     deriving (Data, Typeable,Generic,Eq,Show,Read)
 instance Binary VerifyOpt
 instance Hashable VerifyOpt
@@ -75,6 +90,8 @@ instance Monoid VerifyOpt where
     mappend LeakV FuncV = BothV
     mappend LeakV BothV = BothV
     mappend BothV _ = BothV
+    mappend SmtV _ = SmtV
+    mappend _ SmtV = SmtV
 
 isFuncV BothV = True
 isFuncV FuncV = True
@@ -93,10 +110,12 @@ optionsDecl  = Opts {
     , debugVerification     = debugVerification mempty &= help "Print verification result to stderr" &= groupname "Debugging"
     , typecheck             = typecheck mempty &= help "Typecheck" &= groupname "Typechecking"
     , verify                = verify mempty &= help "Verify" &= groupname "Verification"
+    , solver                = solver mempty &= help "SMT solver to user for verification" &= groupname "Verification"
     , verificationTimeOut   = verificationTimeOut mempty &= help "Timeout for verification" &= groupname "Verification"
     }
     &= help "Jasmin analyser"
 
+solver' = maybe SBV.Boolector id . solver
 verify' = maybe BothV id . verify
 
 mode  :: Mode (CmdArgs Options)

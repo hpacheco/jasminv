@@ -1,0 +1,40 @@
+
+
+fn add(stack u64[4] x, stack u64[4] y) -> (stack u64[4])
+{
+    stack u64 addt0;
+    stack u64 addt1;
+    
+    reg bool cf;
+    
+    //@ u512 k_255_19 = 1 << 255 - 19;
+    //@ u512 init_sum_x = (u512) x[0] + ((u512) x[1] << 64) + ((u512) x[2] << 128) + ((u512) x[3] << 192);
+    //@ u512 init_sum_y = (u512) y[0] + ((u512) y[1] << 64) + ((u512) y[2] << 128) + ((u512) y[3] << 192);
+    //@ assume init_sum_x < k_255_19;
+    //@ assume init_sum_y < k_255_19;
+    
+    cf, x[0] += y[0];
+    cf, x[1] += y[1] + cf;
+    cf, x[2] += y[2] + cf;
+    cf, x[3] += y[3] + cf;
+    
+    addt0 = 0;
+    addt1 = 38;
+    addt1 = addt0 if !cf;
+    
+    
+    cf, x[0] += addt1;
+    cf, x[1] += addt0 + cf;
+    cf, x[2] += addt0 + cf;
+    cf, x[3] += addt0 + cf;
+    
+    addt0 = addt1 if cf;
+    x[0] += addt0;
+    
+    //@ u512 sum_x = (u512) x[0] + ((u512) x[1] << 64) + ((u512) x[2] << 128) + ((u512) x[3] << 192);
+    
+    //@ assert (sum_x - (init_sum_x + init_sum_y)) % k_255_19 == 0;
+    
+    return x;
+}
+

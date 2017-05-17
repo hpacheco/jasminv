@@ -111,7 +111,7 @@ data Token
     
     | VALID
     | FREE
-    | LEAKAGE
+    | SECURITY
     | PUBLIC
     | FUNCTION
     | AXIOM
@@ -205,7 +205,7 @@ instance Monad m => PP m Token where
     
     pp FREE              = return $ text "free"
     pp VALID              = return $ text "valid"
-    pp LEAKAGE           = return $ text "leakage"
+    pp SECURITY           = return $ text "security"
     pp PUBLIC            = return $ text "public"
     pp FUNCTION          = return $ text "function"
     pp AXIOM             = return $ text "axiom"

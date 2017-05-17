@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE ScopedTypeVariables, GADTs #-}
 
 module Utils where
 
@@ -86,3 +86,6 @@ eqTypeOf (TypeOf t1) (TypeOf t2) = if t1 == t2 then unsafeCoerce EqT else NeqT
 
 catchErrorMaybe :: MonadError e m => m a -> m (Maybe a)
 catchErrorMaybe m = catchError (liftM Just m) (const $ return Nothing)
+
+
+

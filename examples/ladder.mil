@@ -449,14 +449,14 @@ fn mladder(stack u64[4] xr, stack u64[4] sp) -> (stack u64[4], stack u64[4]) {
   j = 62;
   for i = 3 downto (-1)
   //@ invariant j == 62 || j == 63;
-  //@ leakage invariant public(j);
+  //@ security invariant public(j);
   {
     tmp1 = sp[i];
     s = tmp1;
     while (j >=s 0)
-    //@ decreases (int64) j;
+    //@ decreases signed(j);
     //@ invariant j <=s 63;
-    //@ leakage invariant public(j);
+    //@ security invariant public(j);
     {
       tmp2 = s;
       bit = tmp2 >> j;

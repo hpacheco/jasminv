@@ -404,10 +404,10 @@ free :: Monad m => ParserT m Bool
 free = liftM isJust $ optionMaybe (tok FREE)
 
 leak :: Monad m => ParserT m Bool
-leak = liftM isJust $ optionMaybe (tok LEAKAGE)
+leak = liftM isJust $ optionMaybe (tok SECURITY)
 
 leak' :: Monad m => (Bool -> ParserT m a) -> ParserT m a
-leak' f = maybeCont (tok LEAKAGE) (f . isJust)
+leak' f = maybeCont (tok SECURITY) (f . isJust)
 
 statementAnnotations :: (MonadIO m) => ParserT m [StatementAnnotation Position]
 statementAnnotations = annotations1 $ many1' (liftM (\(Loc l x) -> StatementAnnotation l x) $ locp statementAnnotation_r)

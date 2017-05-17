@@ -78,7 +78,7 @@ tokens :-
 
 <0>                 free        { lexerAnnTokenInfo FREE }
 <0>                 valid       { lexerAnnTokenInfo VALID }
-<0>                 leakage     { lexerAnnTokenInfo LEAKAGE }
+<0>                 security    { lexerAnnTokenInfo SECURITY }
 <0>                 public      { lexerAnnTokenInfo PUBLIC }
 <0>                 function    { lexerAnnTokenInfo FUNCTION }
 <0>                 axiom       { lexerAnnTokenInfo AXIOM }

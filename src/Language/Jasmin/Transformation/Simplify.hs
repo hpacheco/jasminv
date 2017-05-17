@@ -179,15 +179,19 @@ simplifyLoopAnn_r (LInvariantAnn isFree isLeak e) = do
 
 simplifyPinstr_r :: SimplifyK m => TyInfo -> Pinstr_r TyInfo -> SimplifyM m [Pinstr TyInfo]
 simplifyPinstr_r i (PIFor n dir from to anns (Pblock bi b)) = do
+    let p = infoLoc i
     let v1 = funit n
     let vty = locTyNote "simplifyPinstr_r" n
-    let p = infoLoc i
+    -- inclusive ranges
+    let newto = Pexpr (tyInfoLoc vty p) $ case dir of
+                    Up -> PEOp2 Sub2 to (intPexpr 1)
+                    Down -> PEOp2 Add2 to (intPexpr 1)
     fromvs::Set Piden <- lift2 $ usedVars from
     tovs::Set Piden <- lift2 $ usedVars to
     let initi = decInfoLoc ((Map.empty,False),(Map.singleton v1 (vty,False),False)) p
     let binit = Pinstr initi $ PIAssign [varPlvalue n] RawEq from Nothing
     let cmp = case dir of { Up -> Lt2; Down -> Gt2 }
-    let c = Pexpr (tyInfoLoc TBool p) $ PEOp2 (cmp Unsigned) (varPexpr n) to
+    let c = Pexpr (tyInfoLoc TBool p) $ PEOp2 (cmp Unsigned) (varPexpr n) newto
     let bi' = bi { infoDecClass' = let ((rs,isg1),(ws,isg2)) = infoDecClass bi in Just ((Map.insert v1 (vty,False) rs,isg1),(Map.insert v1 (vty,False) ws,isg2)) }
     let incop = case dir of { Up -> Add2; Down -> Sub2 }
     let b' = Pblock bi' $ b ++ [Pinstr bi' $ PIAssign [varPlvalue n] RawEq (Pexpr (tyInfoLoc vty p) $ PEOp2 incop (varPexpr n) (intPexpr 1)) Nothing]
@@ -195,9 +199,9 @@ simplifyPinstr_r i (PIFor n dir from to anns (Pblock bi b)) = do
     let invop = case dir of { Up -> Le2 ; Down -> Ge2 }
     let anninv0 = case dir of
                     Down -> LoopAnnotation (noTyInfo p) $ LDecreasesAnn False $ varPexpr n
-                    Up -> LoopAnnotation (noTyInfo p) $ LDecreasesAnn False $ Pexpr (tyInfoLoc vty p) $ PEOp2 Sub2 to (varPexpr n)
+                    Up -> LoopAnnotation (noTyInfo p) $ LDecreasesAnn False $ Pexpr (tyInfoLoc vty p) $ PEOp2 Sub2 newto (varPexpr n)
     let anninv1 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (invop Unsigned) from (varPexpr n)
-    let anninv2 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (invop Unsigned) (varPexpr n) to
+    let anninv2 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (invop Unsigned) (varPexpr n) newto
     let anninvp = LoopAnnotation (noTyInfo p) $ LInvariantAnn False True $ Pexpr (tyInfo TBool) $ LeakExpr $ varPexpr n
     concatMapM simplifyPinstr [binit,Pinstr i' $ PIWhile Nothing c (anns++[anninv0,anninv1,anninv2,anninvp]) $ Just b']
 simplifyPinstr_r i (PIWhile (Just b@(Pblock _ is)) c anns Nothing) = do
@@ -404,7 +408,15 @@ loopAnn_r2StmtAnn_r l (LDecreasesAnn isFree e) = do
     let assert = StatementAnnotation l $ cons False $ Pexpr (tyInfoLoc TBool p) $ PEOp2 (Le2 Unsigned) e (varPexpr c')
     return ([def,ass],[assert])
 
-
+splitProcAnns :: [ProcedureAnnotation info] -> ([StatementAnnotation info],[StatementAnnotation info])
+splitProcAnns [] = ([],[])
+splitProcAnns (x:xs) = let (ys1,ys2) = splitProcAnns xs in case split x of
+    Left ys -> (ys++ys1,ys2)
+    Right ys -> (ys1,ys++ys2)
+  where
+    split (ProcedureAnnotation t (RequiresAnn isFree isLeak e))   = Left [StatementAnnotation t $ if isFree then AssumeAnn isLeak e else AssertAnn isLeak e]
+    split (ProcedureAnnotation t (PDecreasesAnn e)) = Left []
+    split (ProcedureAnnotation t (EnsuresAnn isFree isLeak e))    = Right [StatementAnnotation t $ if isFree then AssumeAnn isLeak e else AssertAnn isLeak e]
 
 
 

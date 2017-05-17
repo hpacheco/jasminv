@@ -362,6 +362,8 @@ pexpr_rToDafny annK ct l e@(PEGet n i) = do
     annp <- genDafnyAssumptions annK ct vs pse l
     return (pse,annn++anni++annp)
 pexpr_rToDafny annK ct l fe@(PEFetch t v e) = do
+--    leakMode <- getLeakMode
+--    annvalid <- annExpr False False leakMode annK vs (text "Valid" <> parens (pn <> comma <> pi))
     genError (infoLoc l) $ text "expression fetch not yet supported"
 pexpr_rToDafny annK ct l (PEParens es) = parens_exprToDafny annK ct l es
 pexpr_rToDafny annK ct l e@(PEOp1 o e1) = do

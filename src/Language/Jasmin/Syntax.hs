@@ -575,6 +575,8 @@ data ProcedureAnnotation_r info
     | PDecreasesAnn (Pexpr info)
   deriving (Show,Data,Typeable,Eq,Ord,Generic,Functor)
 
+anninstr2instr (StatementAnnotation t i) = Pinstr t $ Anninstr i
+
 instance (Binary info) => Binary (ProcedureAnnotation_r info)  
 instance (Hashable info) => Hashable (ProcedureAnnotation_r info)
 instance NFData info => NFData (ProcedureAnnotation_r info) where
