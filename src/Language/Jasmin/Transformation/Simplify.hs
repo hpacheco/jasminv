@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, RankNTypes, DoAndIfThenElse, ScopedTypeVariables, FlexibleContexts, ViewPatterns, ConstraintKinds, FlexibleInstances, MultiParamTypeClasses, DeriveDataTypeable, DeriveGeneric #-}
+{-# LANGUAGE TupleSections, TypeFamilies, RankNTypes, DoAndIfThenElse, ScopedTypeVariables, FlexibleContexts, ViewPatterns, ConstraintKinds, FlexibleInstances, MultiParamTypeClasses, DeriveDataTypeable, DeriveGeneric #-}
 
 module Language.Jasmin.Transformation.Simplify where
 
@@ -188,14 +188,14 @@ simplifyPinstr_r i (PIFor n dir from to anns (Pblock bi b)) = do
                     Down -> PEOp2 Add2 to (intPexpr 1)
     fromvs::Set Piden <- lift2 $ usedVars from
     tovs::Set Piden <- lift2 $ usedVars to
-    let initi = decInfoLoc ((Map.empty,False),(Map.singleton v1 (vty,False),False)) p
+    let initi = decInfoLoc (DecClass (Map.empty,False) (Map.singleton v1 (vty,False),False) NoMem) p
     let binit = Pinstr initi $ PIAssign [varPlvalue n] RawEq from Nothing
     let cmp = case dir of { Up -> Lt2; Down -> Gt2 }
     let c = Pexpr (tyInfoLoc TBool p) $ PEOp2 (cmp Unsigned) (varPexpr n) newto
-    let bi' = bi { infoDecClass' = let ((rs,isg1),(ws,isg2)) = infoDecClass bi in Just ((Map.insert v1 (vty,False) rs,isg1),(Map.insert v1 (vty,False) ws,isg2)) }
+    let bi' = bi { infoDecClass' = let (DecClass (rs,isg1) (ws,isg2) mem) = infoDecClass bi in Just (DecClass (Map.insert v1 (vty,False) rs,isg1) (Map.insert v1 (vty,False) ws,isg2) mem) }
     let incop = case dir of { Up -> Add2; Down -> Sub2 }
     let b' = Pblock bi' $ b ++ [Pinstr bi' $ PIAssign [varPlvalue n] RawEq (Pexpr (tyInfoLoc vty p) $ PEOp2 incop (varPexpr n) (intPexpr 1)) Nothing]
-    let i' = i { infoDecClass' = let ((rs,isg1),(ws,isg2)) = infoDecClass i in Just ((Map.insert v1 (vty,False) rs,isg1),(Map.insert v1 (vty,False) ws,isg2)) }
+    let i' = i { infoDecClass' = let (DecClass (rs,isg1) (ws,isg2) mem) = infoDecClass i in Just (DecClass (Map.insert v1 (vty,False) rs,isg1) (Map.insert v1 (vty,False) ws,isg2) mem) }
     let invop = case dir of { Up -> Le2 ; Down -> Ge2 }
     let anninv0 = case dir of
                     Down -> LoopAnnotation (noTyInfo p) $ LDecreasesAnn False $ varPexpr n
@@ -257,47 +257,61 @@ simplifyPblock (Pblock i is) = do
 simplifyPexpr :: SimplifyK m => Bool -> Pexpr TyInfo -> SimplifyM m ([Pinstr TyInfo],Pexpr TyInfo)
 simplifyPexpr isPure (Pexpr i e) = do
     i' <- simplifyTyInfo i
-    (ss,e') <- simplifyPexpr_r isPure e
+    (ss,e') <- simplifyPexpr_r isPure i' e
     return (ss,Pexpr i' e')
 
-simplifyPexpr_r :: SimplifyK m => Bool -> Pexpr_r TyInfo -> SimplifyM m ([Pinstr TyInfo],Pexpr_r TyInfo)
-simplifyPexpr_r isPure (PEParens es) = do
+simplifyPexpr_r :: SimplifyK m => Bool -> TyInfo -> Pexpr_r TyInfo -> SimplifyM m ([Pinstr TyInfo],Pexpr_r TyInfo)
+simplifyPexpr_r isPure l (PEParens es) = do
     (concat -> ss,es') <- Utils.mapAndUnzipM (simplifyPexpr isPure) es
     return (ss,PEParens es')
-simplifyPexpr_r isPure (PEVar n) = do
+simplifyPexpr_r isPure l (PEVar n) = do
     n' <- simplifyPident n
     return ([],PEVar n')
-simplifyPexpr_r isPure (PEGet n e) = do
+simplifyPexpr_r isPure l (PEGet n e) = do
     n' <- simplifyPident n
     (ss,e') <- simplifyPexpr isPure e
     return (ss,PEGet n' e')
-simplifyPexpr_r isPure (PEFetch t n e) = do
+simplifyPexpr_r False l@(infoTy -> TWord w) (PEFetch t v i) | w > 8 = do -- FIXME: martelada para criar variáveis locais!
+    let p = infoLoc l
+    let tw8 = tyInfoLoc (TWord 8) p
+    let n = w `div` 8
+    js <- forM [0..n-1] $ \j -> do
+        (Pident () jn) <- lift2 $ mkNewVar ("v"++show j)
+        return (j,Pident tw8 jn)
+    let mklv (j,jv) = do
+        let def = Pinstr (noTyInfo p) $ Anninstr $ VarDefAnn $ Annarg (TWord 8) jv Nothing
+        let ass = Pinstr (noTyInfo p) $ PIAssign [varPlvalue jv] RawEq (Pexpr tw8 $ PEFetch Nothing v $ Pexpr (loc i) $ PEOp2 Add2 i $ intPexpr (toEnum j)) Nothing
+        return [def,ass]
+    defs <- concatMapM mklv js
+    (is',e') <- simplifyPexpr_r False l $ PEParens $ map (varPexpr . snd) js 
+    return (defs++is',e')
+simplifyPexpr_r isPure l (PEFetch t n e) = do
     (concat -> ss1,t') <- Utils.mapAndUnzipM (simplifyPtype isPure) t
     n' <- simplifyPident n
     (ss2,e') <- simplifyPexpr isPure e
-    return (ss1++ss2,PEFetch t' n' e')
-simplifyPexpr_r isPure (PEBool b) = return ([],PEBool b)
-simplifyPexpr_r isPure (Pcast w e) = do
+    return (ss1++ss2,PEFetch t' n' e') 
+simplifyPexpr_r isPure l (PEBool b) = return ([],PEBool b)
+simplifyPexpr_r isPure l (Pcast w e) = do
     (ss,e') <- simplifyPexpr isPure e
     return (ss,Pcast w e')
-simplifyPexpr_r isPure (PEInt i) = return ([],PEInt i)
-simplifyPexpr_r isPure (PECall n es) = do
+simplifyPexpr_r isPure l (PEInt i) = return ([],PEInt i)
+simplifyPexpr_r isPure l (PECall n es) = do
     n' <- simplifyPident n
     (concat -> ss,es') <- Utils.mapAndUnzipM (simplifyPexpr isPure) es
     return (ss,PECall n' es')
-simplifyPexpr_r isPure (PEOp1 o e) = do
+simplifyPexpr_r isPure l (PEOp1 o e) = do
     o' <- simplifyPeop1 o
     (ss,e') <- simplifyPexpr isPure e
     return (ss,PEOp1 o' e')
-simplifyPexpr_r isPure (PEOp2 o e1 e2) = do
+simplifyPexpr_r isPure l (PEOp2 o e1 e2) = do
     o' <- simplifyPeop2 o
     (ss1,e1') <- simplifyPexpr isPure e1
     (ss2,e2') <- simplifyPexpr isPure e2
     return (ss1++ss2,PEOp2 o' e1' e2')
-simplifyPexpr_r isPure (LeakExpr e) = do
+simplifyPexpr_r isPure l (LeakExpr e) = do
     (ss,e') <- simplifyPexpr isPure e
     return (ss,LeakExpr e')
-simplifyPexpr_r isPure (ValidExpr e) = do
+simplifyPexpr_r isPure l (ValidExpr e) = do
     (concat -> ss,e') <- Utils.mapAndUnzipM (simplifyPexpr isPure) e
     return (ss,ValidExpr e')
 
@@ -322,24 +336,24 @@ simplifyPtype isPure (TArray w e) = do
 simplifyPlvalue :: SimplifyK m => Plvalue TyInfo -> SimplifyM m ([Pinstr TyInfo],Plvalue TyInfo)
 simplifyPlvalue (Plvalue i x) = do
     i' <- simplifyTyInfo i
-    (ss,x') <- simplifyPlvalue_r x
+    (ss,x') <- simplifyPlvalue_r i' x
     return (ss,Plvalue i' x')
 
-simplifyPlvalue_r :: SimplifyK m => Plvalue_r TyInfo -> SimplifyM m ([Pinstr TyInfo],Plvalue_r TyInfo)
-simplifyPlvalue_r PLIgnore = return ([],PLIgnore)
-simplifyPlvalue_r (PLVar n) = do
+simplifyPlvalue_r :: SimplifyK m => TyInfo -> Plvalue_r TyInfo -> SimplifyM m ([Pinstr TyInfo],Plvalue_r TyInfo)
+simplifyPlvalue_r l PLIgnore = return ([],PLIgnore)
+simplifyPlvalue_r l (PLVar n) = do
     n' <- simplifyPident n
     return ([],PLVar n')
-simplifyPlvalue_r (PLArray n e) = do
+simplifyPlvalue_r l (PLArray n e) = do
     n' <- simplifyPident n
     (ss,e') <- simplifyPexpr False e
     return (ss,PLArray n' e')
-simplifyPlvalue_r (PLMem t n e) = do
+simplifyPlvalue_r l (PLMem t n e) = do
     (concat -> ss1,t') <- Utils.mapAndUnzipM (simplifyPtype False) t
     n' <- simplifyPident n
     (ss2,e') <- simplifyPexpr False e
     return (ss1++ss2,PLMem t' n' e')
-simplifyPlvalue_r (PLParens lvs) = do
+simplifyPlvalue_r l (PLParens lvs) = do
     (concat -> ss,lvs') <- Utils.mapAndUnzipM simplifyPlvalue lvs
     return (ss,PLParens lvs')
 
@@ -351,10 +365,10 @@ simplifyTyInfo (TyInfo sto ty dec p) = do
 
 -- drop all global variables
 simplifyDecClass :: SimplifyK m => DecClass -> SimplifyM m DecClass
-simplifyDecClass ((rs,b1),(ws,b2)) = do
+simplifyDecClass (DecClass (rs,b1) (ws,b2) mem) = do
     let rs' = Map.filter (not . snd) rs
     let ws' = Map.filter (not . snd) ws
-    return ((rs',False),(ws',False))
+    return $ DecClass (rs',False) (ws',False) mem
 
 -- ** State
 

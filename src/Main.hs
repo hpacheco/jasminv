@@ -89,12 +89,15 @@ verifySBV opts prog = do
     let msg = text "Verified" <+> PP.int (length oks) <+> text "SMT properties with" <+> PP.int (length kos) <+> text "errors."
     Writer.tell msg
 
-dafnyPreludeFile :: IO FilePath
-dafnyPreludeFile = getDataFileName ("imports" </> "prelude.dfy")
+dafnyPreludeFiles :: IO (FilePath,FilePath)
+dafnyPreludeFiles = do
+    func <- getDataFileName ("imports" </> "prelude.dfy")
+    leak <- getDataFileName ("imports" </> "prelude_leak.dfy")
+    return (func,leak)
 
-genDafny :: (GenVar Piden m,MonadIO m) => Options -> FilePath -> Bool -> Pprogram TyInfo -> StatusM m Doc
-genDafny opts prelude isLeak prog = do
-    e <- lift2 $ toDafny prelude isLeak prog
+genDafny :: (GenVar Piden m,MonadIO m) => Options -> FilePath -> FilePath -> Bool -> Pprogram TyInfo -> StatusM m Doc
+genDafny opts prelude prelude_leak isLeak prog = do
+    e <- lift2 $ toDafny prelude prelude_leak isLeak prog
     case e of
         Left err -> throwError err
         Right dfy -> return dfy
@@ -111,14 +114,14 @@ verifyDafny opts prog = do
         let bpllfile2 = fn ++ "_leak_product.bpl"
         
         -- generate dafny files
-        prelude <- liftIO dafnyPreludeFile
+        (prelude,prelude_leak) <- liftIO dafnyPreludeFiles
         when (isFuncV $ verify' opts) $ do
             when (debugVerification opts) $ liftIO $ hPutStrLn stderr $ show $ text "Generating Dafny output file" <+> text (show dfyfile)
-            dfy <- genDafny opts prelude False prog
+            dfy <- genDafny opts prelude prelude_leak False prog
             liftIO $ writeFile dfyfile (show dfy)
         when (isLeakV $ verify' opts) $ do
             when (debugVerification opts) $ liftIO $ hPutStrLn stderr $ show $ text "Generating Dafny output leakage file" <+> text (show dfylfile)
-            dfyl <- genDafny opts prelude True prog
+            dfyl <- genDafny opts prelude prelude_leak True prog
             liftIO $ writeFile dfylfile (show dfyl)
         
         liftIO $ hSetBuffering stdout LineBuffering

@@ -21,22 +21,39 @@ import Control.DeepSeq as DeepSeq
 import Control.DeepSeq.Generics hiding (force)
 
 -- (read variables, written variables)
-type DecClass = (DecClassVars,DecClassVars)
+data DecClass = DecClass
+    { decReads :: DecClassVars
+    , decWrites :: DecClassVars
+    , decMem :: DecMem
+    }
+  deriving (Eq,Data,Ord,Typeable,Show,Generic)
+instance Binary DecClass
+instance Hashable DecClass
+instance NFData DecClass where
+    rnf = genericRnf
+
+data DecMem = NoMem | ReadMem | WriteMem
+  deriving (Eq,Data,Ord,Typeable,Show,Generic)
+instance Binary DecMem
+instance Hashable DecMem
+instance NFData DecMem where
+    rnf = genericRnf
 
 -- (variables,isglobal)
 type DecClassVars = (Map Piden (Ptype TyInfo,Bool),Bool)
 
 emptyDecClassVars = (Map.empty,False)
-emptyDecClass = (emptyDecClassVars,emptyDecClassVars)
+emptyDecClass = DecClass emptyDecClassVars emptyDecClassVars NoMem
 
 isGlobalDecClassVars :: DecClassVars -> Bool
 isGlobalDecClassVars (xs,b) = b || not (Map.null $ Map.filter snd xs)
 
-addDecClassVars :: DecClassVars -> DecClassVars -> DecClass -> DecClass
-addDecClassVars r2 w2 (r1,w1) = (joinVs r1 r2,joinVs w1 w2)
-      where
-      joinVs (vs1,b1) (vs2,b2) = (Map.unionWith add vs1 vs2,b1 || b2)
-          where add (x1,y1) (x2,y2) = (x1,y1 || y2)
+instance Monoid DecClass where
+    mempty = emptyDecClass
+    mappend (DecClass rs1 ws1 mem1) (DecClass rs2 ws2 mem2) = DecClass (joinVs rs1 rs2) (joinVs ws1 ws2) (max mem1 mem2)
+        where
+        joinVs (vs1,b1) (vs2,b2) = (Map.unionWith add vs1 vs2,b1 || b2)
+            where add (x1,y1) (x2,y2) = (x1,y1 || y2)
 
 data TyInfo = TyInfo { infoSto' :: Maybe Pstorage, infoTy' :: Maybe (Ptype TyInfo), infoDecClass' :: Maybe DecClass, infoLoc :: Position }
   deriving (Eq,Data,Ord,Typeable,Show,Generic)
@@ -57,10 +74,10 @@ instance GenVar Piden m => Vars Piden m TyInfo where
     traverseVars f (TyInfo sto ty cl l) = do
         sto' <- f sto
         ty' <- f ty
-        cl' <- forM cl $ \(rs,ws) -> do
+        cl' <- forM cl $ \(DecClass rs ws mem) -> do
             rs' <- traverseDecClassVars f rs
             ws' <- traverseDecClassVars f ws
-            return (rs',ws')
+            return (DecClass rs' ws' mem)
         l' <- f l
         return $ TyInfo sto' ty' cl' l'
 
@@ -111,7 +128,7 @@ pblockTy is = Pblock (decInfoLoc cl p) is
     where
     p = maybe noloc (infoLoc . loc) (headMay is)
     cls = map (infoDecClass . loc) is
-    cl = foldr (\(rs,ws) cl -> addDecClassVars rs ws cl) emptyDecClass cls
+    cl = mconcat cls
 
 falsePexpr,truePexpr :: Pexpr TyInfo
 falsePexpr = Pexpr (tyInfoLoc TBool noloc) $ PEBool False

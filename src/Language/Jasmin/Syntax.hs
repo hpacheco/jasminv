@@ -722,7 +722,7 @@ ppAnns doc = vcat $ map (\x -> text "//@" <+> text x) $ lines $ show doc
 ppAnn doc = text "//@" <+> doc
 
 ppFree isFree doc = if isFree then text "free" <+> doc else doc
-ppLeak isLeak doc = if isLeak then text "leakage" <+> doc else doc
+ppLeak isLeak doc = if isLeak then text "security" <+> doc else doc
 
 data Pexpr info = Pexpr info (Pexpr_r info)
   deriving (Show,Data,Typeable,Eq,Ord,Generic,Functor)

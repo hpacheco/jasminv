@@ -91,7 +91,7 @@ fn reduce(reg u64[8] z_in) -> reg u64[4] {
   inline int i;
 
   // FIXME: check if this is really required 
-  for i = 0 to 8 { z[i] = z_in[i]; }
+  for i = 0 to 7 { z[i] = z_in[i]; }
 
   crem_p = rem_p;
   for i = 0 to 3 {
@@ -161,7 +161,7 @@ fn mul(stack u64[4] xa, stack u64[4] ya) -> reg u64[4] {
 
   for i = 1 to 3 {
     x[i] = xa[i];
-    for j = 0 to 4 {
+    for j = 0 to 3 {
       y[j] = ya[j];
       h, l = y[j] * x[i];
       cf, z[i+j] += l;
@@ -454,7 +454,7 @@ fn mladder(stack u64[4] xr, stack u64[4] sp) -> (stack u64[4], stack u64[4]) {
     tmp1 = sp[i];
     s = tmp1;
     while (j >=s 0)
-    //@ decreases signed(j);
+    //@ decreases (int64) j;
     //@ invariant j <=s 63;
     //@ security invariant public(j);
     {
@@ -561,7 +561,9 @@ fn invert(stack u64[4] xa) -> stack u64[4] {
 // ** unpack_point
 // ************************************************************************
 
-fn unpack_point(reg u64 xp) -> stack u64[4] {
+fn unpack_point(reg u64 xp) -> stack u64[4]
+//@ requires valid(xp,0*8,4*8 - 1);
+{
   stack u64[4] xa;
   reg u64 x3;
 
@@ -578,7 +580,9 @@ fn unpack_point(reg u64 xp) -> stack u64[4] {
 // ** unpack_secret
 // ************************************************************************
 
-fn unpack_secret(reg u64 sp) -> stack u64[4] {
+fn unpack_secret(reg u64 sp) -> stack u64[4]
+//@ requires valid(sp,0*8,4*8 - 1);
+{
   stack u64[4] sa;
   reg u64 si;
 
@@ -639,12 +643,14 @@ fn freeze(reg u64[4] xa) -> reg u64[4] {
 
 /* assumes input x reduced below 2^255 */
 fn pack(reg u64 rp, reg u64[4] xa)
-//@ requires valid(rp,8,3*8);
+//@ requires valid(rp,0*8,4*8 - 1);
 {
   inline int i;
 
   xa = freeze(xa);
-  for i = 0 to 3 {
+  for i = 0 to 3
+  //@ invariant valid(rp,0*8,4*8 - 1);
+  {
     [rp + (i*8)] = xa[i];
   }
 }
@@ -654,7 +660,11 @@ fn pack(reg u64 rp, reg u64[4] xa)
 
 export fn scalarmult( reg u64 rp /* address to store result  */
                     , reg u64 sp /* address of secret scalar */
-                    , reg u64 pp /* address of point         */) {
+                    , reg u64 pp /* address of point         */)
+//@ requires valid(sp,0*8,4*8 - 1);
+//@ requires valid(pp,0*8,4*8 - 1);
+//@ requires valid(rp,0*8,4*8 - 1);
+{
   stack u64[4] sa;
   stack u64[4] xa;
   stack u64[4] za;

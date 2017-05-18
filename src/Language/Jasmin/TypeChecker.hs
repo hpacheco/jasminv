@@ -121,6 +121,7 @@ tt_expr_r l (PEVar v) = do
     v' <- tt_var v False
     return (PEVar v',infoTyNote "tt_expr" $ loc v')
 tt_expr_r l (PEFetch ct x o) = do
+    addDecMem ReadMem
     x' <- tt_var x False
     w <- tt_as_word l (infoTyNote "tt_expr" $ loc x')
     o' <- tt_index o
@@ -272,6 +273,7 @@ tt_lvalue_r p (PLArray x pi) = do
     ty <- tt_as_array p (locTyNote "tt_lvalue_array" x')
     return (PLArray x' i,Just ty)
 tt_lvalue_r p (PLMem st x pe) = do
+    addDecMem WriteMem
     x' <- tt_var x True
     pe' <- tt_index pe
     w <- tt_as_word p (locTyNote "tt_lvalue_mem" x')
@@ -591,7 +593,7 @@ tt_local m = do
     x <- m
     State.modify $ \e -> e
         { vars = Map.filter (isNothing . snd3) (vars e) `Map.union` Map.filter (isJust . snd3) (vars env)
-        , decClass = let (rs,ws) = decClass e in (dropLocals rs,dropLocals ws)
+        , decClass = let (DecClass rs ws mem) = decClass e in DecClass (dropLocals rs) (dropLocals ws) mem
         }
     return x
 
@@ -611,14 +613,17 @@ resetDecClass m = do
 
 withDecClass :: Monad m => TcM m a -> TcM m (a,DecClass)
 withDecClass m = do
-    (rs,ws) <- getDecClass
-    State.modify $ \env -> env { decClass = (mkEmpty rs,mkEmpty ws) }
+    DecClass rs ws mem <- getDecClass
+    State.modify $ \env -> env { decClass = DecClass (mkEmpty rs) (mkEmpty ws) mem }
     x <- m
-    new@(newrs,newws) <- getDecClass
-    State.modify $ \env -> env { decClass = addDecClassVars rs ws new }
-    return (x,(newrs,newws))
+    new@(DecClass newrs newws newmem) <- getDecClass
+    State.modify $ \env -> env { decClass = mappend (DecClass rs ws mem) new }
+    return (x,new)
   where
     mkEmpty xs = (Map.empty,isGlobalDecClassVars xs)
+
+addDecMem :: TcK m => DecMem -> TcM m ()
+addDecMem mem = State.modify $ \env -> env { decClass = mappend (DecClass emptyDecClassVars emptyDecClassVars mem) (decClass env) }
 
 getVar :: TcK m => Position -> Piden -> Bool -> TcM m (Pident TyInfo)
 getVar l pn@(Pident _ n) isWrite = do
@@ -630,7 +635,7 @@ getVar l pn@(Pident _ n) isWrite = do
             let isGlobal = isNothing sto
             let rs = if isWrite then (Map.empty,isGlobal) else (Map.singleton pn (vt,isGlobal),isGlobal)
             let ws = if isWrite then (Map.singleton pn (vt,isGlobal),isGlobal) else (Map.empty,isGlobal)
-            State.modify $ \env -> env { decClass = addDecClassVars rs ws (decClass env)  }
+            State.modify $ \env -> env { decClass = mappend (DecClass rs ws NoMem) (decClass env)  }
             return $ Pident (stotyInfoLoc' sto vt l) n
         Nothing -> tyError l $ UnknownVar pn (text $ show vs)
 
@@ -649,9 +654,15 @@ localVars m = do
 
 getCall :: TcK m => Position -> Piden -> TcM m (Pident TyInfo,[Ptype TyInfo],[Ptype TyInfo])
 getCall p n =
-    do      (getFun p n >>= \f -> return (pdf_name f,maybe [] (map snd) $ pdf_rty f,map (snd . pa_ty) $ pdf_args f))
-    `mplus` (getAnnLemma p n >>= \f -> return (lemma_name f,[],map (aa_ty) $ lemma_args f))
-    `mplus` (getAnnFun p n >>= \f -> return (af_name f,[af_ty f],map (aa_ty) $ af_args f))
+    do      (getFun p n >>= \f -> mergeDecMem f >> return (pdf_name f,maybe [] (map snd) $ pdf_rty f,map (snd . pa_ty) $ pdf_args f))
+    `mplus` (getAnnLemma p n >>= \f -> mergeDecMem f >> return (lemma_name f,[],map (aa_ty) $ lemma_args f))
+    `mplus` (getAnnFun p n >>= \f -> mergeDecMem f >> return (af_name f,[af_ty f],map (aa_ty) $ af_args f))
+
+mergeDecMem :: (Located a,LocOf a ~ TyInfo,TcK m) => a -> TcM m ()
+mergeDecMem x = do
+    State.modify $ \env -> env { decClass = chg (decClass env) }
+  where
+    chg d = d { decMem = max (decMem $ infoDecClass $ loc x) (decMem d) }
 
 getFun :: TcK m => Position -> Piden -> TcM m (Pfundef TyInfo)
 getFun l n = do

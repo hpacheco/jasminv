@@ -99,17 +99,17 @@ trait Mem
 
   function method ReadMem(i:int) : bv8
   reads this, memory;
-  requires Valid(i);
+  requires Free(Valid(i));
   {
     this.memory[i]
   }
 
   method WriteMem(i:int, v:bv8)
-  requires Valid(i);
+  requires Free(Valid(i));
   modifies memory;
-  ensures Valid(i);
-  ensures this.memory.Length == old(this.memory.Length);
-  ensures forall j:int :: old(Valid(j)) ==> Valid(j);
+  free ensures Valid(i);
+  free ensures this.memory.Length == old(this.memory.Length);
+  free ensures forall j:int :: old(Valid(j)) ==> Valid(j);
   {
     this.memory[i] := v;
   }
