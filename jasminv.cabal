@@ -44,6 +44,8 @@ Library
                         Text.PrettyPrint.Exts
                         Options
                         Utils
+                        Data.Hashable.Exts
+                        Data.SBV.Exts
   Other-Modules:
                         Language.Jasmin.Parser.Lexer
                         Paths_jasminv
