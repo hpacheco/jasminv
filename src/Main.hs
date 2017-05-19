@@ -38,6 +38,7 @@ import qualified Text.ParserCombinators.Parsec.Number as Parsec
 
 import System.Posix.Escape
 import Utils
+import System.TimeIt
 
 -- * main function
 
@@ -102,7 +103,7 @@ genDafny opts prelude prelude_leak isLeak prog = do
         Left err -> throwError err
         Right dfy -> return dfy
 
-verifyDafny :: (GenVar Piden m,MonadIO m) => Options -> Pprogram TyInfo -> StatusM m ()
+verifyDafny :: Options -> Pprogram TyInfo -> StatusM IO ()
 verifyDafny opts prog = do
     let fn = dropExtension $ posFileName $ infoLoc $ loc prog
     when (verify' opts /= NoneV) $ do
@@ -145,23 +146,23 @@ verifyDafny opts prog = do
             BothV -> func >> spec
             NoneV -> return ()
 
-compileDafny :: (MonadIO m) => Bool -> Bool -> FilePath -> FilePath -> StatusM m ()
+compileDafny :: Bool -> Bool -> FilePath -> FilePath -> StatusM IO ()
 compileDafny isLeak isDebug dfy bpl = do
     when isDebug $ liftIO $ hPutStrLn stderr $ show $ text "Compiling Dafny file" <+> text (show dfy)
-    res <- runStatusM_ $ shellyOutput isDebug True "dafny" ["/compile:0",dfy,"/print:"++bpl,"/noVerify"]
-    verifOutput isLeak True res
+    (time,res) <- lift2 $ timeItT $ runStatusM_ $ shellyOutput isDebug True "dafny" ["/compile:0",dfy,"/print:"++bpl,"/noVerify"]
+    verifOutput time isLeak True res
 
-runBoogie :: (MonadIO m) => Int -> Bool -> Bool -> FilePath -> StatusM m ()
+runBoogie :: Int -> Bool -> Bool -> FilePath -> StatusM IO ()
 runBoogie timeout isLeak isDebug bpl = do
     when isDebug $ liftIO $ hPutStrLn stderr $ show $ text "Verifying Boogie file" <+> text (show bpl)
     let dotrace = if isDebug then ["/trace"] else []
     let doTimeLimit = ["/timeLimit:"++show timeout]
-    res <- runStatusM_ $ shellyOutput isDebug False "boogie" $ dotrace ++ doTimeLimit ++ ["/doModSetAnalysis",bpl]
-    verifOutput isLeak False res
+    (time,res) <- lift2 $ timeItT $ runStatusM_ $ shellyOutput isDebug False "boogie" $ dotrace ++ doTimeLimit ++ ["/doModSetAnalysis",bpl]
+    verifOutput time isLeak False res
 
-verifOutput :: (MonadIO m) => Bool -> Bool -> Status -> StatusM m ()
-verifOutput isLeak isDafny st@(Left err) = verifErr isDafny st
-verifOutput isLeak isDafny st@(Right output) = do
+verifOutput :: (MonadIO m) => Double -> Bool -> Bool -> Status -> StatusM m ()
+verifOutput time isLeak isDafny st@(Left err) = verifErr isDafny st
+verifOutput time isLeak isDafny st@(Right output) = do
     let ls = lines $ show output
     let w = last ls
     let errs = filter (List.isPrefixOf "Prover error:") $ init ls
@@ -185,7 +186,7 @@ verifOutput isLeak isDafny st@(Right output) = do
             Left err -> verifErr isDafny st
             Right (oks,kos) -> do
                 let c = if isLeak then "leakage" else "functional"
-                let res = if isDafny then PP.empty else PP.text "Verified" <+> PP.int oks <+> PP.text c <+> PP.text "properties with" <+> PP.int kos <+> PP.text "errors."
+                let res = if isDafny then PP.empty else PP.text "Verified" <+> PP.int oks <+> PP.text c <+> PP.text "properties with" <+> PP.int kos <+> PP.text "errors in" <+> text (show time) <+> text "."
                 case kos of
                     0 -> Writer.tell res
                     otherwise -> throwError $ GenericError noloc res Nothing

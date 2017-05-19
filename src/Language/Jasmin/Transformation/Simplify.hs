@@ -183,25 +183,24 @@ simplifyPinstr_r i (PIFor n dir from to anns (Pblock bi b)) = do
     let v1 = funit n
     let vty = locTyNote "simplifyPinstr_r" n
     -- inclusive ranges
-    let newto = Pexpr (tyInfoLoc vty p) $ case dir of
-                    Up -> PEOp2 Sub2 to (intPexpr 1)
-                    Down -> PEOp2 Add2 to (intPexpr 1)
     fromvs::Set Piden <- lift2 $ usedVars from
     tovs::Set Piden <- lift2 $ usedVars to
     let initi = decInfoLoc (DecClass (Map.empty,False) (Map.singleton v1 (vty,False),False) NoMem) p
     let binit = Pinstr initi $ PIAssign [varPlvalue n] RawEq from Nothing
-    let cmp = case dir of { Up -> Lt2; Down -> Gt2 }
-    let c = Pexpr (tyInfoLoc TBool p) $ PEOp2 (cmp Unsigned) (varPexpr n) newto
+    let cmp = case dir of { Up -> Le2; Down -> Ge2 }
+    let c = Pexpr (tyInfoLoc TBool p) $ PEOp2 (cmp Unsigned) (varPexpr n) to
     let bi' = bi { infoDecClass' = let (DecClass (rs,isg1) (ws,isg2) mem) = infoDecClass bi in Just (DecClass (Map.insert v1 (vty,False) rs,isg1) (Map.insert v1 (vty,False) ws,isg2) mem) }
     let incop = case dir of { Up -> Add2; Down -> Sub2 }
-    let b' = Pblock bi' $ b ++ [Pinstr bi' $ PIAssign [varPlvalue n] RawEq (Pexpr (tyInfoLoc vty p) $ PEOp2 incop (varPexpr n) (intPexpr 1)) Nothing]
+    let incn = Pexpr (tyInfoLoc vty p) $ PEOp2 incop (varPexpr n) (intPexpr 1)
+    let incto = Pexpr (tyInfoLoc vty p) $ PEOp2 incop to (intPexpr 1)
+    let b' = Pblock bi' $ b ++ [Pinstr bi' $ PIAssign [varPlvalue n] RawEq (incn) Nothing]
     let i' = i { infoDecClass' = let (DecClass (rs,isg1) (ws,isg2) mem) = infoDecClass i in Just (DecClass (Map.insert v1 (vty,False) rs,isg1) (Map.insert v1 (vty,False) ws,isg2) mem) }
     let invop = case dir of { Up -> Le2 ; Down -> Ge2 }
     let anninv0 = case dir of
                     Down -> LoopAnnotation (noTyInfo p) $ LDecreasesAnn False $ varPexpr n
-                    Up -> LoopAnnotation (noTyInfo p) $ LDecreasesAnn False $ Pexpr (tyInfoLoc vty p) $ PEOp2 Sub2 newto (varPexpr n)
+                    Up -> LoopAnnotation (noTyInfo p) $ LDecreasesAnn False $ Pexpr (tyInfoLoc vty p) $ PEOp2 Sub2 to (varPexpr n)
     let anninv1 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (invop Unsigned) from (varPexpr n)
-    let anninv2 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (invop Unsigned) (varPexpr n) newto
+    let anninv2 = LoopAnnotation (noTyInfo p) $ LInvariantAnn False False $ Pexpr (tyInfo TBool) $ PEOp2 (invop Unsigned) (varPexpr n) incto
     let anninvp = LoopAnnotation (noTyInfo p) $ LInvariantAnn False True $ Pexpr (tyInfo TBool) $ LeakExpr $ varPexpr n
     concatMapM simplifyPinstr [binit,Pinstr i' $ PIWhile Nothing c (anns++[anninv0,anninv1,anninv2,anninvp]) $ Just b']
 simplifyPinstr_r i (PIWhile (Just b@(Pblock _ is)) c anns Nothing) = do

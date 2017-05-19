@@ -22,7 +22,7 @@ Executable jasminv
   Other-Modules:
                         Language.Jasmin.Parser.Lexer
   Hs-source-dirs:   src
-  Build-Depends:    largeword, sbv, posix-escape, filepath, process, split, text, shelly, containers, cmdargs, base, mtl, transformers, safe, digits, binary, bytestring, syb, array, hashable, parsec, parsec-numbers, pretty, deepseq, deepseq-generics, linguistic-ordinals >= 0.1.0.1
+  Build-Depends:    timeit, largeword, sbv, posix-escape, filepath, process, split, text, shelly, containers, cmdargs, base, mtl, transformers, safe, digits, binary, bytestring, syb, array, hashable, parsec, parsec-numbers, pretty, deepseq, deepseq-generics, linguistic-ordinals >= 0.1.0.1
   Build-Tools:      alex
 
 Library
@@ -50,7 +50,7 @@ Library
                         Language.Jasmin.Parser.Lexer
                         Paths_jasminv
   Hs-Source-Dirs: src
-  Build-Depends:    largeword, sbv, posix-escape, filepath, process, split, text, shelly, containers, cmdargs, base, mtl, transformers, safe, digits, binary, bytestring, syb, array, hashable, parsec, parsec-numbers, pretty, deepseq, deepseq-generics, linguistic-ordinals >= 0.1.0.1
+  Build-Depends:    timeit, largeword, sbv, posix-escape, filepath, process, split, text, shelly, containers, cmdargs, base, mtl, transformers, safe, digits, binary, bytestring, syb, array, hashable, parsec, parsec-numbers, pretty, deepseq, deepseq-generics, linguistic-ordinals >= 0.1.0.1
   Build-Tools:      alex
 
 test-suite tests

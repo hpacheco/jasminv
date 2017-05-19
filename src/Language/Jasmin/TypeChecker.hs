@@ -311,12 +311,11 @@ tt_bool :: TcK m => Pexpr Position -> TcM m (Pexpr TyInfo)
 tt_bool x = expect (loc x) TPBool (infoTyNote "tt_bool" . loc) (tt_expr x)
 
 tt_index :: TcK m => Pexpr Position -> TcM m (Pexpr TyInfo)
-tt_index = tt_int
---tt_index x = do
---    let p = loc x
---    x' <- tt_expr x
---    check_index p (locTy x')
---    return x'
+tt_index x = do
+    let p = loc x
+    x' <- tt_expr x
+    check_index p (locTy x')
+    return x'
 
 tt_indexvar :: TcK m => Pident Position -> Bool -> TcM m (Pident TyInfo)
 tt_indexvar x isWrite = do

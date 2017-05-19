@@ -229,14 +229,14 @@ carry_opToDafny p ls@[l1,l2] op es@[e1,e2,e3] = do
     ptup0 <- pidentToDafny tup0
     ptup1 <- pidentToDafny tup1
     let pcall = text "var" <+> parens (ptup0 <> comma <> ptup1) <+> text ":=" <+> pop <> parens pes <> semicolon
-    let passume = text "assume"  <+> ptup0 <+> text "==" <+> parens (pe1 <+> cmp <+> ptup1) <> semicolon;
+    --let passume = text "assume"  <+> ptup0 <+> text "==" <+> parens (pe1 <+> cmp <+> ptup1) <> semicolon;
     lvs <- lift2 $ usedVars ls    
     dropAssumptions lvs $ do
         (pass1,pres1,post1) <- passToDafny pp StmtK [l1] (Nothing,ptup0)
         (pass2,pres2,post2) <- passToDafny pp StmtK [l2] (Nothing,ptup1)
         let (annpres,pres) = annLinesC StmtKC (pres1++pres2)
         let (annpost,post) = annLinesC StmtKC (post1++post2)
-        return (pres $+$ pcall $+$ passume $+$ pass1 $+$ pass2 $+$ post,annt1 ++ annes ++ annpres ++ annpost)
+        return (pres $+$ pcall $+$ pass1 $+$ pass2 $+$ post,annt1 ++ annes ++ annpres ++ annpost)
 
 pif_rToDafny :: DafnyK m => Bool -> TyInfo -> Pexpr TyInfo -> Pblock TyInfo -> Maybe (Pblock TyInfo) -> DafnyM m (Doc,AnnsDoc)
 pif_rToDafny isPrivate l c s1 s2 = do 

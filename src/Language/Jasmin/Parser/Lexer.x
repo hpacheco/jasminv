@@ -54,7 +54,7 @@ tokens :-
 -- Keywords:
 
 <0>                 @utype          { lexerTokenInfoFunc ( return . T_U . getusize) }
-<0>                 @inttype         { lexerTokenInfoFunc ( return . T_U . getintsize) }
+<0>                 @inttype         { lexerTokenInfoFunc ( return . T_I . getintsize) }
 <0>                 bool        { lexerTokenInfo T_BOOL }
 <0>                 int         { lexerTokenInfo T_INT }
 <0>                 reg         { lexerTokenInfo REG }
