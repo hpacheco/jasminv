@@ -149,7 +149,7 @@ verifyDafny opts prog = do
 compileDafny :: Bool -> Bool -> FilePath -> FilePath -> StatusM IO ()
 compileDafny isLeak isDebug dfy bpl = do
     when isDebug $ liftIO $ hPutStrLn stderr $ show $ text "Compiling Dafny file" <+> text (show dfy)
-    (time,res) <- lift2 $ timeItT $ runStatusM_ $ shellyOutput isDebug True "dafny" ["/compile:0",dfy,"/print:"++bpl,"/noVerify"]
+    (time,res) <- lift2 $ timeItT $ runStatusM_ $ shellyOutput isDebug True "time" ["dafny","/compile:0",dfy,"/print:"++bpl,"/noVerify"]
     verifOutput time isLeak True res
 
 runBoogie :: Int -> Bool -> Bool -> FilePath -> StatusM IO ()
@@ -157,7 +157,7 @@ runBoogie timeout isLeak isDebug bpl = do
     when isDebug $ liftIO $ hPutStrLn stderr $ show $ text "Verifying Boogie file" <+> text (show bpl)
     let dotrace = if isDebug then ["/trace"] else []
     let doTimeLimit = ["/timeLimit:"++show timeout]
-    (time,res) <- lift2 $ timeItT $ runStatusM_ $ shellyOutput isDebug False "boogie" $ dotrace ++ doTimeLimit ++ ["/doModSetAnalysis",bpl]
+    (time,res) <- lift2 $ timeItT $ runStatusM_ $ shellyOutput isDebug False "time" $ ["boogie"] ++ dotrace ++ doTimeLimit ++ ["/doModSetAnalysis",bpl]
     verifOutput time isLeak False res
 
 verifOutput :: (MonadIO m) => Double -> Bool -> Bool -> Status -> StatusM m ()

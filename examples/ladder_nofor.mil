@@ -424,7 +424,10 @@ fn set_int(reg u64 v) -> reg u64[4] {
   return res;
 }
 
-fn mladder(stack u64[4] xr, reg u64 sp) -> (stack u64[4], stack u64[4]) {
+fn mladder(stack u64[4] xr, reg u64 sp) -> (stack u64[4], stack u64[4])
+//@ requires valid(sp,8*0,8*4 - 1);
+//@ security requires public(sp);
+{
   reg bool     cf;
   reg u64      tmp1;
   reg u64      tmp2;
@@ -450,9 +453,18 @@ fn mladder(stack u64[4] xr, reg u64 sp) -> (stack u64[4], stack u64[4]) {
   x3 = xr;
 
   prevbit = 0; j = 62; i = 3;
-  while (i >=s 0) {
+  while (i >=s 0)
+  //@ decreases i;
+  //@ invariant i <=s 4;
+  //@ invariant j == 62 || j == 63;
+  //@ invariant (i >=s 0) ==> valid(sp,8*i,8*i + 7);
+  //@ security invariant public(i);
+  {
     is = i; tmp1 = [sp + 8*i]; s = tmp1;
-    while (j >=s 0) {
+    while (j >=s 0)
+    //@ decreases j;
+    //@ invariant j <=s 63;
+    {
       js = j; tmp2 = s;
       bit = tmp2 >> j;
       bit = bit & 1;
@@ -552,7 +564,10 @@ fn invert(stack u64[4] xa) -> stack u64[4] {
 // ** unpack_point
 // ************************************************************************
 
-fn unpack_point(reg u64 xp) -> stack u64[4] {
+fn unpack_point(reg u64 xp) -> stack u64[4]
+//@ requires valid(xp,0*8,4*8 - 1);
+//@ security requires public(xp);
+{
   stack u64[4] xa;
   reg u64 x3;
 
@@ -569,7 +584,10 @@ fn unpack_point(reg u64 xp) -> stack u64[4] {
 // ** unpack_secret
 // ************************************************************************
 
-fn unpack_secret(reg u64 sp) {
+fn unpack_secret(reg u64 sp)
+//@ requires valid(sp,0*8,4*8 - 1);
+//@ security requires public(sp);
+{
   stack u64[4] sa;
   reg u64 si;
   inline int i;
@@ -630,11 +648,15 @@ fn freeze(reg u64[4] xa) -> reg u64[4] {
 // ************************************************************************
 
 // assumes input x reduced below 2^255 */
-fn pack(reg u64 rp, reg u64[4] xa) {
+fn pack(reg u64 rp, reg u64[4] xa)
+//@ requires valid(rp,0*8,4*8 - 1);
+//@ security requires public(rp);
+{
   inline int i;
 
   xa = freeze(xa);
-  for i = 0 to 3 {
+  for i = 0 to 3
+  {
     [rp + (i*8)] = xa[i];
   }
 }
@@ -644,7 +666,14 @@ fn pack(reg u64 rp, reg u64[4] xa) {
 
  export fn scalarmult( reg u64 rp /* address to store result  */
                     , reg u64 sp /* address of secret scalar */
-                    , reg u64 pp /* address of point         */) {
+                    , reg u64 pp /* address of point         */)
+//@ requires valid(rp,0*8,4*8 - 1);
+//@ requires valid(sp,0*8,4*8 - 1);
+//@ requires valid(pp,0*8,4*8 - 1);
+//@ security requires public(rp);
+//@ security requires public(sp);
+//@ security requires public(pp);
+{
   stack u64[4] save;
   stack u64[4] xa;
   stack u64[4] za;

@@ -1,5 +1,9 @@
 param int crypto_sign_ed25519_amd64_64_38 = 38;
-export fn crypto_sign_ed25519_amd64_64_fe25519_mul(reg u64 rp, reg u64 xp, reg u64 yp){
+export fn crypto_sign_ed25519_amd64_64_fe25519_mul(reg u64 rp, reg u64 xp, reg u64 yp)
+//@ requires valid(rp,0*8,4*8 - 1);
+//@ requires valid(xp,0*8,4*8 - 1);
+//@ requires valid(yp,0*8,4*8 - 1);
+{
 	 reg bool cf;
 	 reg u64 mulc;
 	 reg u64 mulr4;

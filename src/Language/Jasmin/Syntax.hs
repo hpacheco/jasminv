@@ -71,6 +71,8 @@ isLNumericPeop2 Shl2 = True
 isLNumericPeop2 Mod2 = True
 isLNumericPeop2 _ = False
 
+isBoolPeop2 Implies2 = True
+isBoolPeop2 Equiv2 = True
 isBoolPeop2 And2 = True
 isBoolPeop2 Or2 = True
 isBoolPeop2 _ = False
@@ -85,13 +87,15 @@ isCmpPeop2 _ = Nothing
 
 data Peop2 =
   Add2 | Sub2 | Mul2 | And2 | Or2  | BAnd2 | BOr2 | BXor2 |
-  Shr2 Sign | Shl2 | Eq2 | Neq2 | Lt2 Sign | Le2 Sign | Gt2 Sign | Ge2 Sign | Mod2
+  Shr2 Sign | Shl2 | Eq2 | Neq2 | Lt2 Sign | Le2 Sign | Gt2 Sign | Ge2 Sign | Mod2 | Implies2 | Equiv2
     deriving (Eq,Ord,Show,Data,Typeable,Generic)
 instance Binary Peop2
 instance Hashable Peop2
 instance NFData Peop2 where
     rnf = genericRnf
 instance Monad m => PP m Peop2 where
+    pp Implies2 = return $ PP.text "==>"
+    pp Equiv2 = return $ PP.text "<==>"
     pp Add2  = return $ PP.text "+"
     pp Sub2  = return $ PP.text "-"
     pp (Mul2)  = do
@@ -283,7 +287,7 @@ instance Monad m => PP m (Plvalue_r info) where
 type Plval = Plvalue ()
 
 -- (* -------------------------------------------------------------------- *)
-data Peqop = RawEq | AddEq | SubEq | ShREq | ShLEq | BAndEq | BXOrEq | BOrEq  | MulEq
+data Peqop = RawEq | AddEq | SubEq | ShREq Sign | ShLEq | BAndEq | BXOrEq | BOrEq  | MulEq
     deriving (Eq,Ord,Show,Data,Typeable,Generic)
 instance Binary Peqop
 instance Hashable Peqop
@@ -293,7 +297,9 @@ instance Monad m => PP m Peqop where
     pp RawEq = return $ PP.text "="
     pp AddEq = return $ PP.text "+="
     pp SubEq = return $ PP.text "-="
-    pp ShREq = return $ PP.text ">>="
+    pp (ShREq s) = do
+        ps <- pp s
+        return $ PP.text ">>=" <> ps
     pp ShLEq = return $ PP.text "<<="
     pp BAndEq = return $ PP.text "&="
     pp BXOrEq = return $ PP.text "^="

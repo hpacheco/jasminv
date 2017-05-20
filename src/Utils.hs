@@ -20,8 +20,20 @@ fst3 (x,y,z) = x
 snd3 (x,y,z) = y
 thr3 (x,y,z) = z
 
+fst4 (x,y,z,w) = x
+snd4 (x,y,z,w) = y
+thr4 (x,y,z,w) = z
+fou4 (x1,x2,x3,x4) = x4
+
 fst5 = (\(x1,x2,x3,x4,x5) -> x1)
 fou5 = (\(x1,x2,x3,x4,x5) -> x4)
+
+fst6 = (\(x1,x2,x3,x4,x5,x6) -> x1)
+snd6 = (\(x1,x2,x3,x4,x5,x6) -> x2)
+thr6 = (\(x1,x2,x3,x4,x5,x6) -> x3)
+fou6 = (\(x1,x2,x3,x4,x5,x6) -> x4)
+fit6 = (\(x1,x2,x3,x4,x5,x6) -> x5)
+sit6 = (\(x1,x2,x3,x4,x5,x6) -> x6)
 
 funit :: Functor f => f a -> f ()
 funit = fmap (const ())
@@ -38,11 +50,17 @@ funzip xs = (fmap fst xs,fmap snd xs)
 funzip3 :: Traversable t => t (a,b,c) -> (t a,t b,t c)
 funzip3 xs = (fmap fst3 xs,fmap snd3 xs,fmap thr3 xs)
 
+funzip4 :: Traversable t => t (a,b,c,e) -> (t a,t b,t c,t e)
+funzip4 xs = (fmap fst4 xs,fmap snd4 xs,fmap thr4 xs,fmap fou4 xs)
+
 mapAndUnzipM :: (Monad m,Traversable t) => (c -> m (a,b)) -> t c -> m (t a,t b)
 mapAndUnzipM f = liftM funzip . Traversable.mapM f
 
 mapAndUnzip3M :: (Monad m,Traversable t) => (c -> m (a,b,d)) -> t c -> m (t a,t b,t d)
 mapAndUnzip3M f = liftM funzip3 . Traversable.mapM f
+
+mapAndUnzip4M :: (Monad m,Traversable t) => (c -> m (a,b,d,e)) -> t c -> m (t a,t b,t d,t e)
+mapAndUnzip4M f = liftM funzip4 . Traversable.mapM f
 
 mapFst :: (a -> b) -> (a,c) -> (b,c)
 mapFst f (x,y) = (f x,y)

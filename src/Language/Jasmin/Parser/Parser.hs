@@ -64,6 +64,8 @@ peop1 = toK BANG Not1 <?> "peop1"
 
 peop2 :: Monad m => Token -> ParserT m Peop2
 peop2 PLUS          = toK PLUS Add2
+peop2 IMPLIES          = ann $ toK IMPLIES Implies2
+peop2 EQUIV          = ann $ toK EQUIV Equiv2
 peop2 MINUS         = toK MINUS Sub2
 peop2 AMPAMP        = toK AMPAMP   And2  
 peop2 PIPEPIPE      = toK PIPEPIPE Or2   
@@ -90,7 +92,8 @@ pexpr :: MonadIO m => ParserT m (Pexpr Position)
 pexpr = mkPexprs2 atom_expr precedences
     where
     precedences =
-        [(False,[PIPEPIPE])
+        [(False,[IMPLIES,EQUIV])
+        ,(False,[PIPEPIPE])
         ,(False,[AMPAMP])
         ,(False,[PIPE])
         ,(False,[HAT])
@@ -149,7 +152,8 @@ peqop = toK EQ_ RawEq
     <|> toK PLUSEQ  AddEq
     <|> toK MINUSEQ SubEq
     <|> toK STAREQ  MulEq
-    <|> toK GTGTEQ  ShREq
+    <|> toK GTGTEQ_SIGNED  (ShREq Signed)
+    <|> toK GTGTEQ  (ShREq Unsigned)
     <|> toK LTLTEQ  ShLEq
     <|> toK AMPEQ   BAndEq
     <|> toK HATEQ   BXOrEq

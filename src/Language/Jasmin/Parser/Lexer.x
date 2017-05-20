@@ -91,6 +91,8 @@ tokens :-
 <0>                 ensures      { lexerAnnTokenInfo ENSURES }
 <0>                 forall      { lexerAnnTokenInfo FORALL }
 <0>                 exists      { lexerAnnTokenInfo EXISTS }
+<0>                 "==>"      { lexerAnnTokenInfo IMPLIES }
+<0>                 "<==>"      { lexerAnnTokenInfo EQUIV }
 
 -- Literals:
 
@@ -132,6 +134,7 @@ tokens :-
 <0>                 ".."                  { lexerTokenInfo DOTDOT }
 <0>                 ","                  { lexerTokenInfo COMMA }
 <0>                 ">>="                  { lexerTokenInfo GTGTEQ }
+<0>                 ">>=s"                  { lexerTokenInfo GTGTEQ_SIGNED }
 <0>                 "<<="                  { lexerTokenInfo LTLTEQ }
 <0>                 "^="                  { lexerTokenInfo HATEQ }
 <0>                 "|="                  { lexerTokenInfo PIPEEQ }

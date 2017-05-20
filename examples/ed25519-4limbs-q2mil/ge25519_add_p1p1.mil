@@ -3,7 +3,11 @@ param int crypto_sign_ed25519_amd64_64_EC2D0 = 0xEBD69B9426B2F146;
 param int crypto_sign_ed25519_amd64_64_EC2D1 = 0x00E0149A8283B156;
 param int crypto_sign_ed25519_amd64_64_EC2D2 = 0x198E80F2EEF3D130;
 param int crypto_sign_ed25519_amd64_64_EC2D3 = 0xA406D9DC56DFFCE7;
-export fn crypto_sign_ed25519_amd64_64_ge25519_add_p1p1(reg u64 rp, reg u64 pp, reg u64 qp){
+export fn crypto_sign_ed25519_amd64_64_ge25519_add_p1p1(reg u64 rp, reg u64 pp, reg u64 qp)
+//@ requires valid(rp,0*8,16*8 - 1);
+//@ requires valid(pp,0*8,8*8 - 1);
+//@ requires valid(qp,0*8,8*8 - 1);
+{
 	 reg u64 a0;
 	 stack u64 a0_stack;
 	 reg u64 a1;

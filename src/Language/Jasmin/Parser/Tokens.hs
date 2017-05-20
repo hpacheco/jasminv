@@ -86,6 +86,8 @@ data Token
     | LT_SIGNED         
     | GE_SIGNED         
     | GT_SIGNED
+    | IMPLIES
+    | EQUIV
     | DOTDOT     
     | COMMA      
     | GTGTEQ      
@@ -102,6 +104,7 @@ data Token
     | BANG       
     | GTGT       
     | GTGT_SIGNED        
+    | GTGTEQ_SIGNED
     | LTLT        
     | HAT        
     | PIPE       
@@ -196,6 +199,7 @@ instance Monad m => PP m Token where
     pp BANG        = return $ text "!"   
     pp GTGT         = return $ text ">>"  
     pp GTGT_SIGNED = return $ text ">>s"
+    pp GTGTEQ_SIGNED = return $ text ">>=s"
     pp LTLT         = return $ text "<<"  
     pp HAT         = return $ text "^"   
     pp PIPE          = return $ text "|"   
@@ -218,6 +222,8 @@ instance Monad m => PP m Token where
     pp ENSURES          = return $ text "ensures"
     pp FORALL          = return $ text "forall" 
     pp EXISTS          = return $ text "exists" 
+    pp IMPLIES         = return $ text "==>"
+    pp EQUIV = return $ text "<==>"
     pp (ANNOTATION anns) =      return $ text "/*" <+> vcat (map (\ann -> text "@" <> text ann) anns) <+> text "*/"
     
 convertBase :: Integral a => a -> a -> [a] -> [a]

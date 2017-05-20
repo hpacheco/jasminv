@@ -1,4 +1,6 @@
-export fn crypto_sign_ed25519_amd64_64_fe25519_freeze(reg u64 rp){
+export fn crypto_sign_ed25519_amd64_64_fe25519_freeze(reg u64 rp)
+//@ requires valid(rp,0*8,4*8 - 1);
+{
 	 reg bool cf;
 	 reg u64 r0;
 	 reg u64 r1;
